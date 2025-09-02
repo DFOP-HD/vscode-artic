@@ -2,7 +2,7 @@
   "name": "artic-language-server",
   "displayName": "Artic Language Server",
   "description": "Language support for Artic programming language",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "artic",
   "repository": {
     "type": "git",
@@ -90,13 +90,10 @@
     "icon.svg",
     "README.md",
     "LICENSE.md",
-    
     "out/**",
     "node_modules/**",
-
     "syntaxes/**",
     "language-configuration.json",
-    
     "artic-lsp/build/bin/artic"
   ]
 }
