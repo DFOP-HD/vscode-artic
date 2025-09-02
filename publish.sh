@@ -28,11 +28,11 @@ TAG="v$NEW_VERSION"
 VSIX_FILE=$(ls *.vsix | tail -n1)
 
 # Commit version bump
-git add package.json
-git commit -m "Release $TAG"
-git tag "$TAG"
-git push
-git push --tags
+git add package.json package-lock.json
+&& git commit -m "Release $TAG"
+&& git tag "$TAG"
+&& git push
+&& git push --tags
 
 # Create GitHub release and upload package
 echo "Creating GitHub release..."
