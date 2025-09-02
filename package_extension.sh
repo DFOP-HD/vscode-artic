@@ -2,7 +2,7 @@
 
 # Package the Artic VS Code extension with a bundled Artic LSP binary
 # - Builds the C++ language server
-# - Copies the binary into the extension under vscode-client/artic/build/bin/
+# - Copies the binary into the extension under vscode-client/artic-lsp/build/bin/
 # - Compiles the extension
 # - Packages a .vsix using vsce
 
@@ -10,9 +10,9 @@ set -euo pipefail
 
 ROOT_DIR=$(cd "$(dirname "$0")" && pwd)
 EXT_DIR="$ROOT_DIR"
-ARTIC_BIN_SRC="$ROOT_DIR/artic/build/bin/artic"
-ARTIC_BIN_DST_DIR="$EXT_DIR/artic/build/bin"
-ARTIC_BIN_DST="$ARTIC_BIN_DST_DIR/artic"
+ARTIC_BIN_SRC="$ROOT_DIR/artic-lsp/build/bin/artic"
+ARTIC_BIN_DST_DIR="$EXT_DIR/artic-lsp/build/bin"
+ARTIC_BIN_DST="$ARTIC_BIN_DST_DIR/artic-lsp"
 
 echo "==> Building Artic LSP server"
 "$ROOT_DIR/build_lsp.sh"

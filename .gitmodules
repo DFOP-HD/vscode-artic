@@ -1,0 +1,3 @@
+[submodule "artic-lsp"]
+	path = artic-lsp
+	url = git@github.com:DFOP-HD/artic-lsp.git

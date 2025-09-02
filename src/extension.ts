@@ -21,8 +21,8 @@ function findArticBinary(): string {
 
     const possiblePaths = [
         'artic', // In PATH
-        path.join(vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '', 'artic/build/bin/artic'),
-        path.join(vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '', '../artic/build/bin/artic'),
+        path.join(vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '', 'artic-lsp/build/bin/artic'),
+        path.join(vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '', '../artic-lsp/build/bin/artic'),
     ];
 
     for (const testPath of possiblePaths) {

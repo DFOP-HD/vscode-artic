@@ -92,7 +92,7 @@
     "language-configuration.json",
     "README.md",
     "icon.svg",
-    "artic/**",
+    "artic-lsp/**",
     "node_modules/**"
   ]
 }
