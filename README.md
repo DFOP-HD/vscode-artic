@@ -1,69 +1,76 @@
-# Artic Language Server Extension
 
-This VS Code extension provides language support for the Artic programming language through the Language Server Protocol (LSP).
+# Artic Language Server VS Code Extension
+
+This extension adds language support for the Impala programming language in Visual Studio Code, including syntax highlighting and LSP-based features such as diagnostics and go-to-definition.
 
 ## Features
 
-- **Syntax Highlighting**: Basic syntax highlighting for `.art` files
-- **Language Server Integration**: Connects to the Artic LSP server for:
-  - Error diagnostics
-  - Code completion (when implemented)
-  - Hover information (when implemented)
-  - Go to definition (when implemented)
+- Syntax highlighting for `.art` and `.impala` files
+- Language Server Protocol (LSP) integration with the Artic compiler
+- Error diagnostics, go to definition, and more
 
-## Installation and Setup
+## Installation
 
-1. **Build the Artic LSP Server**: Make sure you have built the Artic compiler with LSP support:
-   ```bash
-   cd artic-language-server-plugin
-   ./build_lsp.sh
-   ```
+### 1. Build the Artic LSP Server
 
-2. **Install the Extension**: 
-   - Copy this folder to your VS Code extensions directory, or
-   - Use "Install from VSIX" if you package it as a VSIX file
+You must build the Artic compiler with LSP support. From the root of this repository:
 
-3. **Configure the Server Path** (Optional):
-   - Open VS Code settings
-   - Search for "artic"
-   - Set `artic.serverPath` to the full path of your `artic` binary if it's not in PATH
+```bash
+cd artic-lsp
+./build.sh
+```
+
+This will build the `artic` binary with LSP support and place it in `artic-lsp/build/bin/artic`.
+
+### 2. Package the Extension
+
+To build and package the VS Code extension as a `.vsix` file:
+
+```bash
+./package_extension.sh
+```
+
+This will compile the TypeScript sources and create a `.vsix` package in the current directory.
+
+### 3. Install the Extension
+
+In VS Code, run `Extensions: Install from VSIX...` and select the generated `.vsix` file, or run:
+
+```bash
+code --install-extension artic-language-server-*.vsix
+```
 
 ## Configuration
 
-### Settings
+Open VS Code settings and search for "artic":
 
-- `artic.serverPath`: Path to the Artic language server binary
-- `artic.trace.server`: Enable tracing of LSP communication for debugging
-
-### Commands
-
-- **Artic: Restart Language Server**: Restart the Artic language server if it stops responding
+- `artic.serverPath`: Path to the Artic language server binary. Leave empty to use `artic` from your `PATH`.
+- `artic.trace.server`: Set the trace level for LSP communication (`off`, `messages`, `verbose`).
 
 ## Usage
 
-1. Open any `.art` file in VS Code
-2. The extension will automatically start the Artic language server
-3. You should see syntax highlighting and error diagnostics (if any)
+1. Open a `.art` file in VS Code.
+2. The extension will automatically start the Artic language server.
+3. You will see syntax highlighting and LSP features such as diagnostics.
 
 ## Development
 
-To develop this extension:
+To develop or modify the extension:
 
 ```bash
-cd vscode-client
 npm install
 npm run compile
 # Or for watch mode:
-npm run watch
+
 ```
 
-Press F5 in VS Code to launch the extension in a new Extension Development Host window.
+To test the extension, press F5 in VS Code to open a new Extension Development Host window.
 
 ## Troubleshooting
 
-- **Server not starting**: Check that the `artic` binary is accessible and built with LSP support
-- **No syntax highlighting**: Verify that files have the `.art` extension
-- **Server crashes**: Check the "Artic Language Server" output channel in VS Code for error messages
+- **Server not starting**: Ensure the `artic` binary is built and accessible, and has LSP support (`artic --lsp`).
+- **No syntax highlighting**: Make sure your files have the `.art` extension.
+- **Server crashes**: Check the "Artic Language Server" output channel in VS Code for error messages.
 
 ## Requirements
 

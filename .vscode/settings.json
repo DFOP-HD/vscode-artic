@@ -1,0 +1,14 @@
+{
+    "cmake.sourceDirectory": "artic-lsp",
+    "clangd.arguments": [
+        "--log=verbose",
+        "--compile-commands-dir=${workspaceFolder}/artic-lsp/build"
+    ],
+    "search.exclude": {
+        "**/node_modules": true,
+        "**/build": true,
+        "**/out": true,
+        "**/.git": true
+    },
+    "typescript.preferences.includePackageJsonAutoImports": "off"
+}
