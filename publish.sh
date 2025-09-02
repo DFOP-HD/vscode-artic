@@ -1,6 +1,8 @@
 #!/bin/bash
 set -e
 
+git pull
+
 # Check for uncommitted changes in root and artic-lsp
 if git status --porcelain | grep .; then
     echo "Uncommitted changes found in root repository."
