@@ -2,7 +2,7 @@
   "name": "artic-language-server",
   "displayName": "Artic Language Server",
   "description": "Language support for Artic programming language",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "publisher": "artic",
   "repository": {
     "type": "git",
