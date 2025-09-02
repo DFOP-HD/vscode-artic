@@ -27,6 +27,7 @@ VSIX_FILE=$(ls *.vsix | tail -n1)
 
 # Commit version bump
 git add package.json
+git add package-lock.json
 git commit -m "Release $TAG"
 git tag "$TAG"
 git push
