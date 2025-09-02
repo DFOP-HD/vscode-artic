@@ -87,12 +87,16 @@
     "vscode-languageclient": "^8.1.0"
   },
   "files": [
+    "icon.svg",
+    "README.md",
+    "LICENSE.md",
+    
     "out/**",
+    "node_modules/**",
+
     "syntaxes/**",
     "language-configuration.json",
-    "README.md",
-    "icon.svg",
-    "artic-lsp/**",
-    "node_modules/**"
+    
+    "artic-lsp/build/bin/artic"
   ]
 }
