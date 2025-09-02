@@ -4,15 +4,11 @@ set -e
 # Check for uncommitted changes in root and artic-lsp
 if git status --porcelain | grep .; then
     echo "Uncommitted changes found in root repository."
-else
-    echo "No uncommitted changes in root repository. Aborting."
     exit 1
 fi
 
 if git -C artic-lsp status --porcelain | grep .; then
     echo "Uncommitted changes found in artic-lsp repository."
-else
-    echo "No uncommitted changes in artic-lsp repository. Aborting."
     exit 1
 fi
 
