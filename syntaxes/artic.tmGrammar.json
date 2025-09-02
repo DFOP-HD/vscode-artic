@@ -1,0 +1,144 @@
+{
+    "name": "Artic",
+    "scopeName": "source.artic",
+    "patterns": [
+        {
+            "include": "#keywords"
+        },
+        {
+            "include": "#strings"
+        },
+        {
+            "include": "#comments"
+        },
+        {
+            "include": "#numbers"
+        },
+        {
+            "include": "#functions"
+        },
+        {
+            "include": "#types"
+        },
+        {
+            "include": "#variables"
+        }
+    ],
+    "repository": {
+        "keywords": {
+            "patterns": [
+                {
+                    "name": "keyword.control.artic",
+                    "match": "\\b(if|else|match|while|for|in|break|continue|return)\\b"
+                },
+                {
+                    "name": "keyword.declaration.artic",
+                    "match": "\\b(let|mut|fn|struct|enum|type|implicit|static|mod|use|asm|addrspace|simd)\\b"
+                },
+                {
+                    "name": "keyword.other.artic",
+                    "match": "\\b(as|super|implicit|summon|true|false)\\b"
+                },
+                {
+                    "name": "storage.type.artic",
+                    "match": "\\b(bool|i8|i16|i32|i64|u8|u16|u32|u64|f16|f32|f64)\\b"
+                },
+                {
+                    "name": "keyword.eval.artic",
+                    "match": "@"
+                }
+            ]
+        },
+        "strings": {
+            "patterns": [
+                {
+                    "name": "string.quoted.double.artic",
+                    "begin": "\"",
+                    "end": "\"",
+                    "patterns": [
+                        {
+                            "name": "constant.character.escape.artic",
+                            "match": "\\\\."
+                        }
+                    ]
+                },
+                {
+                    "name": "string.quoted.single.artic",
+                    "begin": "'",
+                    "end": "'",
+                    "patterns": [
+                        {
+                            "name": "constant.character.escape.artic",
+                            "match": "\\\\."
+                        }
+                    ]
+                }
+            ]
+        },
+        "comments": {
+            "patterns": [
+                {
+                    "name": "comment.line.double-slash.artic",
+                    "match": "//.*$"
+                },
+                {
+                    "name": "comment.block.artic",
+                    "begin": "/\\*",
+                    "end": "\\*/"
+                }
+            ]
+        },
+        "numbers": {
+            "patterns": [
+                {
+                    "name": "constant.numeric.artic",
+                    "match": "\\b[0-9][0-9_]*\\b"
+                },
+                {
+                    "name": "constant.numeric.hex.artic",
+                    "match": "\\b0x[0-9a-fA-F_]+\\b"
+                },
+                {
+                    "name": "constant.numeric.binary.artic",
+                    "match": "\\b0b[01_]+\\b"
+                },
+                {
+                    "name": "constant.numeric.float.artic",
+                    "match": "\\b[0-9][0-9_]*\\.[0-9_]*\\b"
+                }
+            ]
+        },
+        "functions": {
+            "patterns": [
+                {
+                    "name": "entity.name.function.artic",
+                    "match": "\\b([a-zA-Z_][a-zA-Z0-9_]*)\\s*(?=\\()"
+                },
+                {
+                    "name": "entity.name.function.generic.artic",
+                    "match": "\\b([a-zA-Z_][a-zA-Z0-9_]*)\\s*(?=\\[)"
+                }
+            ]
+        },
+        "types": {
+            "patterns": [
+                {
+                    "name": "entity.name.type.artic",
+                    "match": "\\b[A-Z][a-zA-Z0-9_]*\\b"
+                }
+            ]
+        },
+        "variables": {
+            "patterns": [
+                {
+                    "name": "entity.name.variable.artic",
+                    "match": "\\b[a-z][a-zA-Z0-9_]*\\b"
+                },
+                {
+                    "name": "entity.name.variable.anonymous.artic",
+                    "match": "\\b_[a-zA-Z0-9_]*\\b"
+                }
+            ]
+        }
+    }
+}
