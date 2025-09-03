@@ -19,10 +19,12 @@ function findArticBinary(): string {
         return serverPath;
     }
 
+    const extensionArticPath = path.join(__dirname, '..', 'artic-lsp', 'build', 'bin', 'artic');
+
     const possiblePaths = [
-        'artic', // In PATH
-        path.join(vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '', 'artic-lsp/build/bin/artic'),
-        path.join(vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '', '../artic-lsp/build/bin/artic'),
+        extensionArticPath, // Packaged
+        'artic', // on PATH
+        path.join(vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '', 'artic-lsp/build/bin/artic'), // Workspace
     ];
 
     for (const testPath of possiblePaths) {

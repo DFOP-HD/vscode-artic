@@ -40,7 +40,7 @@
             "command": "./build_lsp.sh",
             "group": "build",
             "options": {
-                "cwd": "${workspaceFolder}/.."
+                "cwd": "${workspaceFolder}"
             },
             "presentation": {
                 "echo": true,

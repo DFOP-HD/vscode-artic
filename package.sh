@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 
 # Package the Artic VS Code extension with a bundled Artic LSP binary
+#!/usr/bin/env bash
+
+# Package the Artic VS Code extension with a bundled Artic LSP binary
 # - Builds the C++ language server
 # - Copies the binary into the extension under vscode-client/artic-lsp/build/bin/
 # - Compiles the extension
@@ -43,4 +46,16 @@ if [[ -n "${VSIX_FILE:-}" ]]; then
   echo "To install locally: code --install-extension \"$EXT_DIR/$VSIX_FILE\""
 else
   echo "⚠ Could not detect output .vsix. Check the packaging logs above."
+fi
+
+# Optional install step
+if [[ "$1" == "install" ]]; then
+  VSIX_FILE=$(ls *.vsix | tail -n1)
+  if [[ -f "$VSIX_FILE" ]]; then
+    echo "Installing extension: $VSIX_FILE"
+    code --install-extension "$VSIX_FILE"
+  else
+    echo "VSIX package not found. Please run the packaging step first."
+    exit 1
+  fi
 fi

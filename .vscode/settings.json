@@ -1,5 +1,5 @@
 {
-    "cmake.sourceDirectory": "artic-lsp",
+    "cmake.sourceDirectory": "${workspaceFolder}/artic-lsp",
     "clangd.arguments": [
         "--log=verbose",
         "--compile-commands-dir=${workspaceFolder}/artic-lsp/build"
