@@ -49,7 +49,7 @@ else
 fi
 
 # Optional install step
-if [[ "$1" == "install" ]]; then
+if [[ "${1:-}" == "install" ]]; then
   VSIX_FILE=$(ls *.vsix | tail -n1)
   if [[ -f "$VSIX_FILE" ]]; then
     echo "Installing extension: $VSIX_FILE"
