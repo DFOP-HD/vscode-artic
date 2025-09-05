@@ -85,6 +85,7 @@ export function activate(context: vscode.ExtensionContext) {
         // Start the client (which also starts the server)
         client.start().then(() => {
             console.log('Artic Language Server started successfully');
+            client.outputChannel?.show(true);
         }).catch(error => {
             console.error('Failed to start Artic Language Server:', error);
             vscode.window.showErrorMessage(`Failed to start Artic Language Server: ${error.message}`);
@@ -93,7 +94,8 @@ export function activate(context: vscode.ExtensionContext) {
         // Register commands
         const restartCommand = vscode.commands.registerCommand('artic.restart', async () => {
             if (client) {
-                await client.restart();
+                if (client.isRunning()) await client.restart();
+                client.outputChannel?.show(true);
                 vscode.window.showInformationMessage('Artic Language Server restarted');
             }
         });
