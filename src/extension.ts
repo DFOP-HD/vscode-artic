@@ -78,17 +78,16 @@ export function activate(context: vscode.ExtensionContext) {
 
         // Client options
         const clientOptions: LanguageClientOptions = {
-            // Register the server for Artic files
-            documentSelector: [
-                { scheme: 'file', language: 'artic' }
-            ],
+            documentSelector: [ { scheme: 'file', language: 'artic' } ],
             synchronize: {
-                // Notify the server about file changes to .art files
-                fileEvents: [vscode.workspace.createFileSystemWatcher('**/*.art'), vscode.workspace.createFileSystemWatcher('**/*.impala')]
+                fileEvents: [
+                    vscode.workspace.createFileSystemWatcher('**/*.art'),
+                    vscode.workspace.createFileSystemWatcher('**/*.impala'),
+                    // Watch workspace project configuration file(s)
+                    vscode.workspace.createFileSystemWatcher('**/artic.json')
+                ]
             },
-            // Output channel for debugging
             outputChannelName: 'Artic Language Server',
-            // Trace setting
             traceOutputChannel: vscode.window.createOutputChannel('Artic Language Server Trace')
         };
 
@@ -123,6 +122,10 @@ export function activate(context: vscode.ExtensionContext) {
         // Register commands
         const restartCommand = vscode.commands.registerCommand('artic.restart', async () => {
             if (client) {
+                client.clientOptions.initializationOptions = {
+                    workspaceConfig: discoverWorkspaceConfigPath(),
+                    globalConfig: resolveGlobalConfigPath()
+                }
                 if (client.isRunning()) await client.restart();
                 client.outputChannel?.show(true);
                 vscode.window.showInformationMessage('Artic Language Server restarted');
@@ -145,9 +148,6 @@ export function activate(context: vscode.ExtensionContext) {
             }
         });
         context.subscriptions.push(reloadConfigCommand);
-
-        vscode.window.showInformationMessage("amongus");
-
     
     } catch (error: any) {
         console.error('Failed to start Artic Language Server:', error);
