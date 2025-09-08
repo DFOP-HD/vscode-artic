@@ -66,6 +66,16 @@
           ],
           "default": "off",
           "description": "Traces the communication between VS Code and the Artic language server."
+        },
+        "artic.globalConfig": {
+          "type": "string",
+          "default": "",
+          "description": "Path to a global artic-global.json configuration file providing shared projects and defaults."
+        },
+        "artic.enableWorkspaceConfig": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable reading artic.json workspace project configuration files."
         }
       }
     }

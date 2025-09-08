@@ -6,6 +6,24 @@ import { existsSync } from 'fs';
 
 let client: LanguageClient;
 
+// Option A (pull) implementation: server will parse artic.json/global config.
+// Client only supplies paths via initializationOptions.
+
+function discoverWorkspaceConfigPath(): string | undefined {
+    const folders = vscode.workspace.workspaceFolders;
+    if (!folders || folders.length === 0) return undefined;
+    const candidate = path.join(folders[0].uri.fsPath, 'artic.json');
+    return existsSync(candidate) ? candidate : undefined;
+}
+
+function resolveGlobalConfigPath(): string | undefined {
+    const cfg = vscode.workspace.getConfiguration('artic');
+    const p = cfg.get<string>('globalConfig', '').trim();
+    if (!p) return undefined;
+    if (p.startsWith('~')) return path.join(process.env.HOME || '', p.slice(1));
+    return p;
+}
+
 function findArticBinary(): string {
     // Prefer bundled binary inside the extension, then config, then PATH, then workspace
     const bundled = path.join(__dirname, '..', 'artic', 'build', 'bin', 'artic');
@@ -74,12 +92,21 @@ export function activate(context: vscode.ExtensionContext) {
             traceOutputChannel: vscode.window.createOutputChannel('Artic Language Server Trace')
         };
 
-        // Create the language client
+    const workspaceConfigPath = discoverWorkspaceConfigPath();
+    const globalConfigPath = resolveGlobalConfigPath();
+
+    // Create the language client
         client = new LanguageClient(
             'articLanguageServer',
             'Artic Language Server',
             serverOptions,
-            clientOptions
+            {
+                ...clientOptions,
+                initializationOptions: {
+                    workspaceConfig: workspaceConfigPath,
+                    globalConfig: globalConfigPath
+                }
+            }
         );
 
         // Start the client (which also starts the server)
@@ -91,7 +118,7 @@ export function activate(context: vscode.ExtensionContext) {
             vscode.window.showErrorMessage(`Failed to start Artic Language Server: ${error.message}`);
         });
 
-        // Register commands
+    // Register commands
         const restartCommand = vscode.commands.registerCommand('artic.restart', async () => {
             if (client) {
                 if (client.isRunning()) await client.restart();
@@ -99,8 +126,7 @@ export function activate(context: vscode.ExtensionContext) {
                 vscode.window.showInformationMessage('Artic Language Server restarted');
             }
         });
-
-        context.subscriptions.push(restartCommand);
+    context.subscriptions.push(restartCommand);
     
     } catch (error: any) {
         console.error('Failed to start Artic Language Server:', error);
