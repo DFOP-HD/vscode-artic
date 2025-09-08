@@ -11,7 +11,7 @@
 				"${workspaceRoot}/out/**/*.js",
 			],
 			"autoAttachChildProcesses": true,
-			"preLaunchTask": "Build Artic LSP Server"
+			"preLaunchTask": "Build Extension with LSP Server"
 		},
     ]
 }

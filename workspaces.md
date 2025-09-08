@@ -21,6 +21,7 @@ Example:
             ]
         }
     ],
+    // include projects from external atric.json files (may be recursive)
     "include": [
         // optional for global dependencies, allows you to define a fallback path
         {
@@ -47,6 +48,7 @@ In the extension settings of this extension, you can define a global configurati
     // use these defaults whenever you are editing at a file that does not belong to any project. always includes the active file
     "default-project": {
         "name": "<no project>",
+        "folder": null,
         "dependencies": [
             "anydsl.runtime",
             "anydsl.artic-utils"
