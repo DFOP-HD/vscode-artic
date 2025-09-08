@@ -1,12 +1,12 @@
 {
   "name": "artic-language-server",
   "displayName": "Artic Language Server",
-  "description": "Language support for Artic programming language",
+  "description": "Language support for Impala programming language",
   "version": "0.1.9",
   "publisher": "artic",
   "repository": {
     "type": "git",
-    "url": "https://github.com/your-org/artic-language-server"
+    "url": "https://github.com/DFOP-HD/vscode-artic"
   },
   "engines": {
     "vscode": "^1.75.0"
@@ -29,7 +29,8 @@
           "artic"
         ],
         "extensions": [
-          ".art"
+          ".art",
+          ".impala"
         ],
         "configuration": "./language-configuration.json"
       }
