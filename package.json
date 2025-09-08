@@ -2,7 +2,7 @@
   "name": "artic-language-server",
   "displayName": "Artic Language Server",
   "description": "Language support for Artic programming language",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "publisher": "artic",
   "repository": {
     "type": "git",
@@ -45,6 +45,11 @@
       {
         "command": "artic.restart",
         "title": "Restart Artic Language Server",
+        "category": "Artic"
+      },
+      {
+        "command": "artic.reloadConfig",
+        "title": "Reload Artic Configuration",
         "category": "Artic"
       }
     ],

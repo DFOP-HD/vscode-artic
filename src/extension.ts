@@ -130,6 +130,24 @@ export function activate(context: vscode.ExtensionContext) {
         });
         context.subscriptions.push(restartCommand);
 
+        const reloadConfigCommand = vscode.commands.registerCommand('artic.reloadConfig', async () => {
+            try {
+                if (!client) return;
+                // Send a workspace/didChangeConfiguration to encourage servers that rely on it
+                await client.sendNotification('workspace/didChangeConfiguration', { settings: {} });
+                // Also send custom request (fire and forget) if server implements it
+                // We name it artic/reloadWorkspace (request or notification). Using notification for simplicity.
+                await client.sendNotification('artic/reloadWorkspace');
+                client.outputChannel?.appendLine('Sent reload configuration notification');
+                vscode.window.showInformationMessage('Artic configuration reload requested');
+            } catch (e:any) {
+                vscode.window.showErrorMessage(`Failed to send reload: ${e.message}`);
+            }
+        });
+        context.subscriptions.push(reloadConfigCommand);
+
+        vscode.window.showInformationMessage("amongus");
+
     
     } catch (error: any) {
         console.error('Failed to start Artic Language Server:', error);
