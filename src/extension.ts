@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import { LanguageClient, LanguageClientOptions, ServerOptions, TransportKind } from 'vscode-languageclient/node';
 import { execSync } from 'child_process';
-import { existsSync } from 'fs';
+import { existsSync, writeFileSync } from 'fs';
 
 let client: LanguageClient;
 
@@ -84,7 +84,8 @@ export function activate(context: vscode.ExtensionContext) {
                     vscode.workspace.createFileSystemWatcher('**/*.art'),
                     vscode.workspace.createFileSystemWatcher('**/*.impala'),
                     // Watch workspace project configuration file(s)
-                    vscode.workspace.createFileSystemWatcher('**/artic.json')
+                    vscode.workspace.createFileSystemWatcher('**/artic.json'),
+                    vscode.workspace.createFileSystemWatcher('**/artic-global.json')
                 ]
             },
             outputChannelName: 'Artic Language Server',
@@ -109,16 +110,62 @@ export function activate(context: vscode.ExtensionContext) {
         );
 
         // Start the client (which also starts the server)
-        client.start().then(() => {
+        client.start().then(async () => {
             console.log('Artic Language Server started successfully');
-            vscode.window.showInformationMessage(`global config: ${globalConfigPath}`);
-            vscode.window.showInformationMessage(`workspace config: ${workspaceConfigPath}`);
             client.outputChannel?.show(true);
+
+            const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+            const defaultWorkspaceConfig = workspaceRoot ? path.join(workspaceRoot, 'artic.json') : undefined;
+            const defaultGlobalConfig = path.join(process.env.HOME || '', 'artic-global.json');
+
+            const ensureConfig = async (kind: 'workspace' | 'global') => {
+                const targetPath = kind === 'workspace' ? defaultWorkspaceConfig : defaultGlobalConfig;
+                if (!targetPath) return;
+                if (existsSync(targetPath)) return; // already exists
+                const createLabel = kind === 'workspace' ? 'Create workspace artic.json' : 'Create global artic-global.json';
+                const detail = kind === 'workspace'
+                    ? 'Create an artic.json in the workspace root so projects can be configured.'
+                    : 'Create a global artic-global.json in your home directory for shared projects.';
+                const choice = await vscode.window.showInformationMessage(detail, createLabel, 'Dismiss');
+                                if (choice === createLabel) {
+                                        const template = `{
+    "artic-config": "1.0",
+    "projects": [
+        {
+            "name": "main",
+            "files": ["src/**/*.impala", "src/**/*.art", "*.impala", "*.art"],
+            "dependencies": []
+        }
+    ],
+    "default-project": { "name": "main" }
+}`;
+                                        try {
+                        writeFileSync(targetPath, template, { flag: 'wx' });
+                        const doc = await vscode.workspace.openTextDocument(targetPath);
+                        await vscode.window.showTextDocument(doc);
+                        // Update initializationOptions & restart so server sees new config path
+                        (client.clientOptions as any).initializationOptions = {
+                            workspaceConfig: (kind === 'workspace') ? targetPath : (workspaceConfigPath || defaultWorkspaceConfig),
+                            globalConfig: (kind === 'global') ? targetPath : (globalConfigPath || defaultGlobalConfig)
+                        };
+                        await client.restart();
+                        vscode.window.showInformationMessage(`${kind === 'workspace' ? 'Workspace' : 'Global'} Artic config created and server restarted.`);
+                    } catch (e: any) {
+                        vscode.window.showErrorMessage(`Failed to create ${kind} config: ${e.message}`);
+                    }
+                }
+            };
+
+            if (!workspaceConfigPath && defaultWorkspaceConfig) {
+                await ensureConfig('workspace');
+            }
+            if (!globalConfigPath) {
+                await ensureConfig('global');
+            }
         }).catch(error => {
             console.error('Failed to start Artic Language Server:', error);
             vscode.window.showErrorMessage(`Failed to start Artic Language Server: ${error.message}`);
         });
-
         // Register commands
         const restartCommand = vscode.commands.registerCommand('artic.restart', async () => {
             if (client) {

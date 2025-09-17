@@ -20,6 +20,9 @@
     "lsp"
   ],
   "main": "./out/extension.js",
+  "activationEvents": [
+    "workspaceContains:artic.json"
+  ],
   "contributes": {
     "languages": [
       {
