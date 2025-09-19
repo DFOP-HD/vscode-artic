@@ -78,14 +78,15 @@ export function activate(context: vscode.ExtensionContext) {
 
         // Client options
         const clientOptions: LanguageClientOptions = {
-            documentSelector: [ { scheme: 'file', language: 'artic' } ],
+            documentSelector: [ 
+                { scheme: 'file', language: 'artic' },
+                { scheme: 'file', language: 'json', pattern: '**/{artic,artic-global}.json' }
+             ],
             synchronize: {
                 fileEvents: [
                     vscode.workspace.createFileSystemWatcher('**/*.art'),
                     vscode.workspace.createFileSystemWatcher('**/*.impala'),
-                    // Watch workspace project configuration file(s)
                     vscode.workspace.createFileSystemWatcher('**/artic.json'),
-                    vscode.workspace.createFileSystemWatcher('**/artic-global.json')
                 ]
             },
             outputChannelName: 'Artic Language Server',
@@ -126,7 +127,8 @@ export function activate(context: vscode.ExtensionContext) {
                 const detail = kind === 'workspace'
                     ? 'Create an artic.json in the workspace root so projects can be configured.'
                     : 'Create a global artic-global.json in your home directory for shared projects.';
-                const choice = await vscode.window.showInformationMessage(detail, createLabel, 'Dismiss');
+                // TODO update
+                    const choice = await vscode.window.showInformationMessage(detail, createLabel, 'Dismiss');
                                 if (choice === createLabel) {
                                         const template = `{
     "artic-config": "1.0",
