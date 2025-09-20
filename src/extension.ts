@@ -6,21 +6,56 @@ import { existsSync, writeFileSync } from 'fs';
 
 let client: LanguageClient;
 
-// Option A (pull) implementation: server will parse artic.json/global config.
-// Client only supplies paths via initializationOptions.
+const globalConfigTemplate = `{
+    "artic-config": "1.0",
+    "default-project": {
+        "name": "<unknown project>",
+        "dependencies": [
+            "anydsl.runtime",
+        ],
+        "files": [
+            "**/*.impala",
+            "**/*.art",
+        ]
+    },
+    "projects": [],
+    "include-projects": [
+        "repos/anydsl/runtime/artic.json?"
+    ]
+}`;
 
-function discoverWorkspaceConfigPath(): string | undefined {
+const workspaceConfigTemplate = `{
+    "artic-config": "1.0",
+    "projects": [
+        {
+            "name": "new project",
+            "dependencies": [
+                "anydsl.runtime",
+            ],
+            "files": [
+                "**/*.impala",
+                "**/*.art",
+            ]
+        }
+    ],
+    "include-projects": [
+        "<global>",
+        "../anydsl/runtime/artic.json?"
+    ]
+}`;
+
+
+function getWorkspaceConfigPath(): string | undefined {
     const folders = vscode.workspace.workspaceFolders;
     if (!folders || folders.length === 0) return undefined;
-    const candidate = path.join(folders[0].uri.fsPath, 'artic.json');
-    return existsSync(candidate) ? candidate : undefined;
+    const p = path.join(folders[0].uri.fsPath, 'artic.json');
+    return p;
 }
 
-function resolveGlobalConfigPath(): string | undefined {
+function getGlobalConfigPath(): string | undefined {
     const cfg = vscode.workspace.getConfiguration('artic');
     const p = cfg.get<string>('globalConfig', '').trim();
     if (!p) return undefined;
-    if (p.startsWith('~')) return path.join(process.env.HOME || '', p.slice(1));
     return p;
 }
 
@@ -93,8 +128,8 @@ export function activate(context: vscode.ExtensionContext) {
             traceOutputChannel: vscode.window.createOutputChannel('Artic Language Server Trace')
         };
 
-        const workspaceConfigPath = discoverWorkspaceConfigPath();
-        const globalConfigPath = resolveGlobalConfigPath();
+        const workspaceConfigPath = getWorkspaceConfigPath();
+        const globalConfigPath = getGlobalConfigPath();
 
         // Create the language client
         client = new LanguageClient(
@@ -116,54 +151,51 @@ export function activate(context: vscode.ExtensionContext) {
             client.outputChannel?.show(true);
 
             const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-            const defaultWorkspaceConfig = workspaceRoot ? path.join(workspaceRoot, 'artic.json') : undefined;
-            const defaultGlobalConfig = path.join(process.env.HOME || '', 'artic-global.json');
 
-            const ensureConfig = async (kind: 'workspace' | 'global') => {
-                const targetPath = kind === 'workspace' ? defaultWorkspaceConfig : defaultGlobalConfig;
-                if (!targetPath) return;
-                if (existsSync(targetPath)) return; // already exists
-                const createLabel = kind === 'workspace' ? 'Create workspace artic.json' : 'Create global artic-global.json';
-                const detail = kind === 'workspace'
-                    ? 'Create an artic.json in the workspace root so projects can be configured.'
-                    : 'Create a global artic-global.json in your home directory for shared projects.';
-                // TODO update
-                    const choice = await vscode.window.showInformationMessage(detail, createLabel, 'Dismiss');
-                                if (choice === createLabel) {
-                                        const template = `{
-    "artic-config": "1.0",
-    "projects": [
-        {
-            "name": "main",
-            "files": ["src/**/*.impala", "src/**/*.art", "*.impala", "*.art"],
-            "dependencies": []
-        }
-    ],
-    "default-project": { "name": "main" }
-}`;
-                                        try {
-                        writeFileSync(targetPath, template, { flag: 'wx' });
-                        const doc = await vscode.workspace.openTextDocument(targetPath);
+            const ensureConfig = async (config: Config) => {
+                if (config.path && existsSync(config.path)) return; // already exists
+                if (!config.defaultPath) return;
+                const choice = await vscode.window.showInformationMessage(config.detailLabel, config.createLabel, 'Dismiss');
+                if (choice === config.createLabel) {
+                    try {
+                        if (!existsSync(config.defaultPath)) writeFileSync(config.defaultPath, config.template, { flag: 'wx' });
+                        const cfg = vscode.workspace.getConfiguration('artic');
+                        cfg.update('globalConfig', config.defaultPath, vscode.ConfigurationTarget.Global);
+                        const doc = await vscode.workspace.openTextDocument(config.defaultPath);
                         await vscode.window.showTextDocument(doc);
-                        // Update initializationOptions & restart so server sees new config path
-                        (client.clientOptions as any).initializationOptions = {
-                            workspaceConfig: (kind === 'workspace') ? targetPath : (workspaceConfigPath || defaultWorkspaceConfig),
-                            globalConfig: (kind === 'global') ? targetPath : (globalConfigPath || defaultGlobalConfig)
-                        };
-                        await client.restart();
-                        vscode.window.showInformationMessage(`${kind === 'workspace' ? 'Workspace' : 'Global'} Artic config created and server restarted.`);
+                        vscode.window.showInformationMessage(`Created config at ${config.defaultPath}`);
                     } catch (e: any) {
-                        vscode.window.showErrorMessage(`Failed to create ${kind} config: ${e.message}`);
+                        vscode.window.showErrorMessage(`Failed to create artic config: ${e.message}`);
                     }
                 }
-            };
+            }
+            type Config = {
+                defaultPath: string | undefined
+                path: string | undefined
+                createLabel: string
+                detailLabel: string
+                template: string
+                isGlobalConfig: boolean
+            }
+            const workspaceConfig: Config = {
+                defaultPath: workspaceRoot ? path.join(workspaceRoot, 'artic.json') : undefined,
+                path: client.clientOptions.initializationOptions.workspaceConfig,
+                createLabel: 'Create workspace artic.json',
+                detailLabel: 'Create an artic.json in the workspace root so projects can be configured.',
+                template: workspaceConfigTemplate,
+                isGlobalConfig: false
+            }
+            const globalConfig: Config = {
+                defaultPath: path.join(process.env.HOME || '', 'artic-global.json'),
+                path: client.clientOptions.initializationOptions.globalConfig,
+                createLabel: 'Create global artic-global.json',
+                detailLabel: 'Create a global artic-global.json in your home directory for shared projects.',
+                template: globalConfigTemplate,
+                isGlobalConfig: true
+            }
 
-            if (!workspaceConfigPath && defaultWorkspaceConfig) {
-                await ensureConfig('workspace');
-            }
-            if (!globalConfigPath) {
-                await ensureConfig('global');
-            }
+            await ensureConfig(workspaceConfig);
+            await ensureConfig(globalConfig);
         }).catch(error => {
             console.error('Failed to start Artic Language Server:', error);
             vscode.window.showErrorMessage(`Failed to start Artic Language Server: ${error.message}`);
@@ -172,8 +204,8 @@ export function activate(context: vscode.ExtensionContext) {
         const restartCommand = vscode.commands.registerCommand('artic.restart', async () => {
             if (client) {
                 client.clientOptions.initializationOptions = {
-                    workspaceConfig: discoverWorkspaceConfigPath(),
-                    globalConfig: resolveGlobalConfigPath()
+                    workspaceConfig: getWorkspaceConfigPath(),
+                    globalConfig: getGlobalConfigPath()
                 }
                 if (client.isRunning()) await client.restart();
                 client.outputChannel?.show(true);
