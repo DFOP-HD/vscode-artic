@@ -2,30 +2,15 @@
     "name": "Artic",
     "scopeName": "source.artic",
     "patterns": [
-        {
-            "include": "#keywords"
-        },
-        {
-            "include": "#strings"
-        },
-        {
-            "include": "#comments"
-        },
-        {
-            "include": "#numbers"
-        },
-        {
-            "include": "#declarations"
-        },
-        {
-            "include": "#functions"
-        },
-        {
-            "include": "#types"
-        },
-        {
-            "include": "#variables"
-        }
+        { "include": "#keywords" },
+        { "include": "#strings" },
+        { "include": "#comments" },
+        { "include": "#numbers" },
+        { "include": "#attributes" },
+        { "include": "#declarations" },
+        { "include": "#functions" },
+        { "include": "#types" },
+        { "include": "#variables" }
     ],
     "repository": {
         "keywords": {
@@ -108,6 +93,25 @@
                 {
                     "name": "constant.numeric.float.artic",
                     "match": "\\b[0-9][0-9_]*\\.[0-9_]*\\b"
+                }
+            ]
+        },
+        "attributes": {
+            "patterns": [
+                {
+                    "begin": "#\\[",
+                    "end": "\\]",
+                    "name": "meta.attribute.artic",
+                    "patterns": [
+                        {
+                            "name": "keyword.attribute.artic",
+                            "match": "\\b(import|export)\\b"
+                        },
+                        { "include": "#strings" },
+                        { "include": "#comments" },
+                        { "include": "#numbers" },
+                        { "include": "#variables" }
+                    ]
                 }
             ]
         },
