@@ -15,6 +15,9 @@
             "include": "#numbers"
         },
         {
+            "include": "#declarations"
+        },
+        {
             "include": "#functions"
         },
         {
@@ -105,6 +108,18 @@
                 {
                     "name": "constant.numeric.float.artic",
                     "match": "\\b[0-9][0-9_]*\\.[0-9_]*\\b"
+                }
+            ]
+        },
+        "declarations": {
+            "patterns": [
+                {
+                    "name": "entity.name.type.struct.decl.artic",
+                    "match": "(?<=\\bstruct\\s+)[A-Za-z_][A-Za-z0-9_]*"
+                },
+                {
+                    "name": "entity.name.type.module.decl.artic",
+                    "match": "(?<=\\bmod\\s+)[A-Za-z_][A-Za-z0-9_]*"
                 }
             ]
         },
