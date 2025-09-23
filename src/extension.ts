@@ -19,7 +19,7 @@ const globalConfigTemplate = `{
         ]
     },
     "projects": [],
-    "include-projects": [
+    "include": [
         "repos/anydsl/runtime/artic.json?"
     ]
 }`;
@@ -38,7 +38,7 @@ const workspaceConfigTemplate = `{
             ]
         }
     ],
-    "include-projects": [
+    "include": [
         "<global>",
         "../anydsl/runtime/artic.json?"
     ]
@@ -59,17 +59,17 @@ function getGlobalConfigPath(): string | undefined {
     return p;
 }
 
+// Config > Bundled > PATH
 function findArticBinary(): string {
-    // Prefer bundled binary inside the extension, then config, then PATH, then workspace
-    const bundled = path.join(__dirname, '..', 'artic', 'build', 'bin', 'artic');
-    if (existsSync(bundled)) {
-        return bundled;
-    }
-
     const config = vscode.workspace.getConfiguration('artic');
     let serverPath = config.get<string>('serverPath', '');
     if (serverPath && existsSync(serverPath)) {
         return serverPath;
+    }
+
+    const bundled = path.join(__dirname, '..', 'artic', 'build', 'bin', 'artic');
+    if (existsSync(bundled)) {
+        return bundled;
     }
 
     const extensionArticPath = path.join(__dirname, '..', 'artic-lsp', 'build', 'bin', 'artic');

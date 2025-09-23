@@ -1,9 +1,9 @@
 {
   "name": "artic-language-server",
-  "displayName": "Artic Language Server",
-  "description": "Language support for Impala programming language",
+  "displayName": "AnyDSL - Artic Language Server",
+  "description": "Language support for AnyDSL's Impala programming language",
   "version": "0.1.9",
-  "publisher": "artic",
+  "publisher": "timgruen",
   "repository": {
     "type": "git",
     "url": "https://github.com/DFOP-HD/vscode-artic"
@@ -15,6 +15,8 @@
     "Programming Languages"
   ],
   "keywords": [
+    "anydsl",
+    "impala",
     "artic",
     "language-server",
     "lsp"
@@ -28,8 +30,12 @@
       {
         "id": "artic",
         "aliases": [
+          "Impala",
+          "impala",
           "Artic",
-          "artic"
+          "artic",
+          "AnyDSL",
+          "anydsl"
         ],
         "extensions": [
           ".art",
@@ -80,11 +86,6 @@
           "type": "string",
           "default": "",
           "description": "Path to a global artic-global.json configuration file providing shared projects and defaults."
-        },
-        "artic.enableWorkspaceConfig": {
-          "type": "boolean",
-          "default": true,
-          "description": "Enable reading artic.json workspace project configuration files."
         }
       }
     }
