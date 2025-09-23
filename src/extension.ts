@@ -11,12 +11,9 @@ const globalConfigTemplate = `{
     "default-project": {
         "name": "<unknown project>",
         "dependencies": [
-            "anydsl.runtime",
+            "anydsl.runtime"
         ],
-        "files": [
-            "**/*.impala",
-            "**/*.art",
-        ]
+        "files": []
     },
     "projects": [],
     "include": [
@@ -30,11 +27,11 @@ const workspaceConfigTemplate = `{
         {
             "name": "new project",
             "dependencies": [
-                "anydsl.runtime",
+                "anydsl.runtime"
             ],
             "files": [
                 "**/*.impala",
-                "**/*.art",
+                "**/*.art"
             ]
         }
     ],
@@ -159,11 +156,14 @@ export function activate(context: vscode.ExtensionContext) {
                 if (choice === config.createLabel) {
                     try {
                         if (!existsSync(config.defaultPath)) writeFileSync(config.defaultPath, config.template, { flag: 'wx' });
-                        const cfg = vscode.workspace.getConfiguration('artic');
-                        cfg.update('globalConfig', config.defaultPath, vscode.ConfigurationTarget.Global);
+                        if (config.isGlobalConfig) {
+                            const cfg = vscode.workspace.getConfiguration('artic');
+                            cfg.update('globalConfig', config.defaultPath, vscode.ConfigurationTarget.Global);
+                        }
                         const doc = await vscode.workspace.openTextDocument(config.defaultPath);
                         await vscode.window.showTextDocument(doc);
-                        vscode.window.showInformationMessage(`Created config at ${config.defaultPath}`);
+                        vscode.window.showInformationMessage(`Created config at ${config.defaultPath}, please restart the language server`);
+                        //TODO reload
                     } catch (e: any) {
                         vscode.window.showErrorMessage(`Failed to create artic config: ${e.message}`);
                     }
