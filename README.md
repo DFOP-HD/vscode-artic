@@ -1,21 +1,23 @@
 
 # AnyDSL - Artic Language Server
 
-Language support for AnyDSL's Impala programming language in Visual Studio Code.
+Visual Studio Code Language support for AnyDSL's Impala programming language.\
+The language server is based on a fork of the Artic compiler frontend and continuously compiles your code as you write it.
 
 Note: The language server is currently in an alpha stage and only supports a limited feature set. Please report any technical or non-technical problems.
 
 ## Features
 
 - Syntax highlighting
-- Error diagnostics using the Artic compiler
-- Go to definition
+- Diagnostics (errors, warnings, hints)
+- Go to definition (for variables, functions, structs, ...)
 
 ## Limitations
 
 - Only supports x86_64 Linux
-- Go to definition limitations:
-    - Only available if your code parses without errors
+- Does not support the legacy Impala syntax
+- Go to definition feature:
+    - Not available when your code has syntax errors
     - Not availalbe for projection expressions (e.g. `my_struct.field` -> cannot find definition for `field`)
     - Not available for path expressions (e.g. `my_module::func()` -> goes to definition of `my_module`)
 
