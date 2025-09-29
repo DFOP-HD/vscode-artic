@@ -152,7 +152,7 @@ Example:
 
 ```js
 vscode-artic
-| artic-lsp                   // Language server - fork of artic - c++ \
+| artic-lsp                   // Language server - fork of Artic (c++)
 | src
 | | extension.ts              // Language client (vscode)
 | syntaxes
