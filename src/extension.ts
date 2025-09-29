@@ -22,8 +22,7 @@ const workspaceConfigTemplate = `{
     "projects": [
         {
             "name": "new project",
-            "dependencies": [
-            ],
+            "dependencies": [],
             "files": [
                 "**/*.impala",
                 "**/*.art"
