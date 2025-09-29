@@ -150,8 +150,9 @@ Example:
 
 ## Repository
 
+```
 vscode-artic
-| artic-lsp                   // Language server - fork of artic - c++
+| artic-lsp                   // Language server - fork of artic - c++ \
 | src
 | | extension.ts              // Language client (vscode)
 | syntaxes
@@ -162,12 +163,13 @@ vscode-artic
 | package.sh                  // builds artic-lsp and extension, packages the extension
 | publish.sh                  // builds and packages everything, publishes a new release (internal)
 |
-| LICENSE.md                  
-| README.md                   
+| LICENSE.md
+| README.md
+```
 
 ## Build Requirements
 
-- Clang compiler
+- Clang (compiler)
 - AnyDSL (specifically Thorin)
   - Set the path to thorin in `artic-lsp/build.sh`
   - Note: Not directly used by the language server, could be removed in the future, but that would require larger changes to artic
