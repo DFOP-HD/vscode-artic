@@ -145,7 +145,7 @@ export function activate(context: vscode.ExtensionContext) {
         // Start the client (which also starts the server)
         client.start().then(async () => {
             console.log('Artic Language Server started successfully');
-            client.outputChannel?.show(true);
+            // client.outputChannel?.show(true);
 
             const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
 
