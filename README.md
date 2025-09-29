@@ -37,7 +37,7 @@ Note: The language server is currently in an alpha stage and only supports a lim
 1. Download the latest release of the extension [here](https://github.com/DFOP-HD/vscode-artic/releases).
 
 2. Install the extension using one of these options:
-    - a) Open the command palette in VS Code with `Ctrl+P`, select `Extensions: Install from VSIX...` and then select the downloaded `.vsix` file.
+    - a) Open the command palette in VS Code with `Ctrl+Shift+P`, select `Extensions: Install from VSIX...` and then select the downloaded `.vsix` file.
     - b) Run this command in the terminal: `code --install-extension artic-language-server-<version>.vsix`
 
 ## Workspace Configuration File
@@ -150,7 +150,7 @@ Example:
 
 ## Repository
 
-```
+```js
 vscode-artic
 | artic-lsp                   // Language server - fork of artic - c++ \
 | src
