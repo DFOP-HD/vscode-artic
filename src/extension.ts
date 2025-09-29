@@ -10,15 +10,11 @@ const globalConfigTemplate = `{
     "artic-config": "1.0",
     "default-project": {
         "name": "<unknown project>",
-        "dependencies": [
-            "anydsl.runtime"
-        ],
+        "dependencies": [],
         "files": []
     },
     "projects": [],
-    "include": [
-        "repos/anydsl/runtime/artic.json?"
-    ]
+    "include": []
 }`;
 
 const workspaceConfigTemplate = `{
@@ -27,7 +23,6 @@ const workspaceConfigTemplate = `{
         {
             "name": "new project",
             "dependencies": [
-                "anydsl.runtime"
             ],
             "files": [
                 "**/*.impala",
@@ -36,8 +31,7 @@ const workspaceConfigTemplate = `{
         }
     ],
     "include": [
-        "<global>",
-        "../anydsl/runtime/artic.json?"
+        "<global>"
     ]
 }`;
 
