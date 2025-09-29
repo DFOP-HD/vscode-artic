@@ -6,6 +6,8 @@ The language server is based on a fork of the Artic compiler frontend and contin
 
 Note: The language server is currently in an alpha stage and only supports a limited feature set. Please report any technical or non-technical problems.
 
+![demo](docs/media/demo.gif)
+
 ## Features
 
 - Syntax highlighting
@@ -58,8 +60,8 @@ Example:
             "name": "my project",     // name of the project (must be unique)
             "folder": "",             // root folder of the project (optional, defaults to location of the configuration file)
             "dependencies": [
-                "anydsl.runtime",     // include all files of the project 'anydsl.runtime'     (and it's dependencies)
-                "anydsl.artic-utils"  // include all files of the project 'anydsl.artic-utils' (and it's dependencies)
+                "runtime",     // include all files of the project 'runtime'     (and it's dependencies)
+                "artic-utils"  // include all files of the project 'artic-utils' (and it's dependencies)
             ],
             "files": [
                 "/home/gruen/absolute.art", // include single file (absolute path)
@@ -73,6 +75,9 @@ Example:
 
     // recursively include projects from other configuration files (paths do not support wildcards)
     "include": [
+        "../anydsl/runtime/artic.json",       // here: defines project runtime
+        "../anydsl/artic-utils/artic.json",   // here: defines project artic-utils
+
         // include projects from global config 'artic-global.json' (path specified in extension settings). 
         // also active even when "<global>" is not explicitly specified
         "<global>",                           
@@ -80,9 +85,6 @@ Example:
         // mark include as optional with '?' postfix 
         // (useful as a fallback for projects assumed to be included by 'artic-global.json') 
         "~/repos/anydsl/optional/artic.json?" 
-
-        "../anydsl/runtime/artic.json",       // here: defines project anydsl.runtime
-        "../anydsl/artic-utils/artic.json",   // here: defines project anydsl.artic-utils
     ],
     
     // default project (usually only defined in 'artic-global.json'):
@@ -92,7 +94,7 @@ Example:
     "default-project": {
         "name": "default project",
         "dependencies": [
-            "anydsl.runtime" // usually includes default dependencies like the runtime library
+            "runtime" // usually includes default dependencies like this runtime library
         ],
         "files": []
     },
@@ -112,7 +114,7 @@ Example:
     "default-project": {
         "name": "default project",
         "dependencies": [
-            "anydsl.runtime"
+            "runtime"
         ],
         "files": []
     },
@@ -122,7 +124,7 @@ Example:
 
     // included projects are globally available
     "include": [
-        "repos/anydsl/runtime/artic.json" // here: defines project 'anydsl.runtime'
+        "repos/anydsl/runtime/artic.json" // here: defines project 'runtime'
     ]
 }
 ```
