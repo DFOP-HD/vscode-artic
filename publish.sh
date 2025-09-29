@@ -15,8 +15,8 @@ if git -C artic-lsp status --porcelain | grep .; then
 fi
 
 # Increment version number in package.json (patch version)
-echo "Incrementing version..."
-npm version patch --no-git-tag-version
+# echo "Incrementing version..."
+# npm version patch --no-git-tag-version
 
 # Compile and package the extension
 echo "Compiling and packaging extension..."
