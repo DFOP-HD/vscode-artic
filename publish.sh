@@ -20,7 +20,7 @@ npm version patch --no-git-tag-version
 
 # Compile and package the extension
 echo "Compiling and packaging extension..."
-./package.sh
+./package.sh install
 
 # Get new version
 NEW_VERSION=$(node -p "require('./package.json').version")
