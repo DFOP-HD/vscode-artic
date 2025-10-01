@@ -2,7 +2,7 @@
   "name": "artic-language-server",
   "displayName": "AnyDSL - Artic Language Server",
   "description": "Language support for AnyDSL's Impala programming language",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "publisher": "timgruen",
   "repository": {
     "type": "git",
