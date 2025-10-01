@@ -172,7 +172,13 @@ vscode-artic
 - AnyDSL (specifically Thorin)
   - Set the path to thorin in `artic-lsp/build.sh`
   - Note: Not directly used by the language server, could be removed in the future, but that would require larger changes to artic
+  - For now if you plan on using the exported package on another machine, you should build thorin without LLVM support to avoid the dependency
 - nlohmann_json
+
+## Checkout the repository
+
+1. clone the repository
+2. run `git submodule update --recursive`
 
 ## Build and Start Extension Development Host
 
