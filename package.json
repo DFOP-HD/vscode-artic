@@ -114,6 +114,7 @@
     "node_modules/**",
     "syntaxes/**",
     "language-configuration.json",
-    "artic-lsp/build/bin/artic"
+    "artic-lsp/build/bin/artic",
+    "artic-lsp/build/lib/libartic.so"
   ]
 }

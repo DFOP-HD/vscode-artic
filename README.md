@@ -1,4 +1,3 @@
-
 # AnyDSL - Artic Language Server
 
 Visual Studio Code Language support for AnyDSL's Impala programming language.\
@@ -173,6 +172,7 @@ vscode-artic
 - AnyDSL (specifically Thorin)
   - Set the path to thorin in `artic-lsp/build.sh`
   - Note: Not directly used by the language server, could be removed in the future, but that would require larger changes to artic
+- nlohmann_json
 
 ## Build and Start Extension Development Host
 
