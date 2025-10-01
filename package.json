@@ -115,6 +115,7 @@
     "syntaxes/**",
     "language-configuration.json",
     "artic-lsp/build/bin/artic",
-    "artic-lsp/build/lib/libartic.so"
+    "artic-lsp/build/lib/libartic.so",
+    "artic-lsp/build/lib/libthorin.so"
   ]
 }
