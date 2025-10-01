@@ -1,6 +1,8 @@
 
 # AnyDSL - Artic Language Server
 
+IMPORTANT: there is currently a bug in the current builds that prevents the server from starting if you did not build it from source. Working on a fix...
+
 Visual Studio Code Language support for AnyDSL's Impala programming language.\
 The language server is based on a fork of the Artic compiler frontend and continuously compiles your code as you write it.
 
