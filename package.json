@@ -51,6 +51,12 @@
         "path": "./syntaxes/artic.tmGrammar.json"
       }
     ],
+    "snippets": [
+      {
+        "language": "artic",
+        "path": "./snippets/artic.json"
+      }
+    ],
     "commands": [
       {
         "command": "artic.restart",

@@ -1,0 +1,193 @@
+{
+    "Function Declaration": {
+        "prefix": [
+            "fn",
+            "function"
+        ],
+        "body": [
+            "fn @${1:function_name}(${2:arg}: ${3:Type}) -> ${4:ReturnType} {",
+            "\t${0}",
+            "}"
+        ],
+        "description": "Create a function declaration"
+    },
+    "Function with Multiple Args": {
+        "prefix": [
+            "fnm",
+            "function-multi"
+        ],
+        "body": [
+            "fn ${1:function_name}(${2:arg1}: ${3:Type1}, ${4:arg2}: ${5:Type2}) -> ${6:ReturnType} {",
+            "\t${0}",
+            "}"
+        ],
+        "description": "Create a function with multiple arguments"
+    },
+    "Void Function": {
+        "prefix": [
+            "fnv",
+            "function-void"
+        ],
+        "body": [
+            "fn ${1:function_name}(${2:arg}: ${3:Type}) {",
+            "\t${0}",
+            "}"
+        ],
+        "description": "Create a void function"
+    },
+    "For Loop": {
+        "prefix": [
+            "for"
+        ],
+        "body": [
+            "for ${1:i} in ${2:range} {",
+            "\t${0}",
+            "}"
+        ],
+        "description": "Create a for loop"
+    },
+    "While Loop": {
+        "prefix": [
+            "while"
+        ],
+        "body": [
+            "while ${1:condition} {",
+            "\t${0}",
+            "}"
+        ],
+        "description": "Create a while loop"
+    },
+    "If Statement": {
+        "prefix": [
+            "if"
+        ],
+        "body": [
+            "if ${1:condition} {",
+            "\t${0}",
+            "}"
+        ],
+        "description": "Create an if statement"
+    },
+    "Else Statement": {
+        "prefix": [
+            "else"
+        ],
+        "body": [
+            "else {",
+            "\t${0}",
+            "}"
+        ],
+        "description": "Create an else statement"
+    },
+    "If-Else Statement": {
+        "prefix": [
+            "ifelse"
+        ],
+        "body": [
+            "if ${1:condition} {",
+            "\t${2}",
+            "} else {",
+            "\t${0}",
+            "}"
+        ],
+        "description": "Create an if-else statement"
+    },
+    "Match Expression": {
+        "prefix": [
+            "match"
+        ],
+        "body": [
+            "match ${1:expression} {",
+            "\t${2:pattern} => ${3:result},",
+            "\t${0}",
+            "}"
+        ],
+        "description": "Create a match expression"
+    },
+    "Struct Declaration": {
+        "prefix": [
+            "struct"
+        ],
+        "body": [
+            "struct ${1:StructName} {",
+            "\t${2:field}: ${3:Type},",
+            "\t${0}",
+            "}"
+        ],
+        "description": "Create a struct declaration"
+    },
+    "Let Binding": {
+        "prefix": [
+            "let"
+        ],
+        "body": [
+            "let ${1:variable} = ${0:value};"
+        ],
+        "description": "Create a let binding"
+    },
+    "Module Declaration": {
+        "prefix": [
+            "mod"
+        ],
+        "body": [
+            "mod ${1:module_name} {",
+            "\t${0}",
+            "}"
+        ],
+        "description": "Create a module declaration"
+    },
+    "bitcast[T](value)": {
+        "prefix": [
+            "bitcast"
+        ],
+        "body": [
+            "bitcast[${1:T}](${0:value})"
+        ],
+        "description": "Create a call to bitcast"
+    },
+    "addrspace(x)": {
+        "prefix": [
+            "addrspace"
+        ],
+        "body": [
+            "addrspace(${1:1}) ${0}"
+        ],
+        "description": "addrspace"
+    },
+    "Export Attribute": {
+        "prefix": [
+            "#export"
+        ],
+        "body": [
+            "#[export]"
+        ],
+        "description": "Add an export attribute"
+    },
+    "Export Attribute (named)": {
+        "prefix": [
+            "#exportnamed"
+        ],
+        "body": [
+            "#[export(name=\"${1:name}\")] ${0}"
+        ],
+        "description": "Add an export attribute (named)"
+    },
+    "Import Attribute": {
+        "prefix": [
+            "#import"
+        ],
+        "body": [
+            "#[import]"
+        ],
+        "description": "Add an import attribute"
+    },
+    "Import Attribute (named)": {
+        "prefix": [
+            "#importcc"
+        ],
+        "body": [
+            "#[import(cc=\"${1:C}\", name=\"${2:name}\")] ${0}"
+        ],
+        "description": "Add an import attribute (with args)"
+    }
+}
