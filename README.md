@@ -20,9 +20,8 @@ Note: The language server is currently in an alpha stage and only supports a lim
 
 - Only supports x86_64 Linux
 - Does not support the legacy Impala syntax
-- Go to definition feature:
-    - Not available when your code has syntax errors
-    - Not available for path expressions (e.g. `my_module::func()` -> goes to definition of `my_module`)
+- Go to definition is not available when your code has syntax errors
+
 
 ## Usage
 
