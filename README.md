@@ -11,7 +11,10 @@ Note: The language server is currently in an alpha stage and only supports a lim
 
 - Syntax highlighting
 - Diagnostics (errors, warnings, hints)
-- Go to definition (for variables, functions, structs, ...)
+- Go to definition
+- Find references
+- Rename action
+- Code snippets (for loops, function declarations, ...)
 
 ## Limitations
 
@@ -19,7 +22,6 @@ Note: The language server is currently in an alpha stage and only supports a lim
 - Does not support the legacy Impala syntax
 - Go to definition feature:
     - Not available when your code has syntax errors
-    - Not availalbe for projection expressions (e.g. `my_struct.field` -> cannot find definition for `field`)
     - Not available for path expressions (e.g. `my_module::func()` -> goes to definition of `my_module`)
 
 ## Usage
