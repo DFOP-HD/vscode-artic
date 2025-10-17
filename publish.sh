@@ -16,7 +16,8 @@ fi
 
 # Increment version number in package.json (patch version)
 echo "Incrementing version..."
-npm version patch --no-git-tag-version
+VERSION_TYPE="${1:-patch}"
+npm version "$VERSION_TYPE" --no-git-tag-version
 
 # Compile and package the extension
 echo "Compiling and packaging extension..."
