@@ -115,7 +115,13 @@ export function activate(context: vscode.ExtensionContext) {
                 ]
             },
             outputChannelName: 'Artic Language Server',
-            traceOutputChannel: vscode.window.createOutputChannel('Artic Language Server Trace')
+            traceOutputChannel: vscode.window.createOutputChannel('Artic Language Server Trace'),
+            // Enable semantic tokens
+            middleware: {
+                provideDocumentSemanticTokens: (document, token, next) => {
+                    return next(document, token);
+                }
+            }
         };
 
         const workspaceConfigPath = getWorkspaceConfigPath();
