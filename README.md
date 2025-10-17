@@ -3,7 +3,7 @@
 Visual Studio Code Language support for AnyDSL's Impala programming language.\
 The language server is based on a fork of the Artic compiler frontend and continuously compiles your code as you write it.
 
-Note: The language server is currently in an alpha stage and only supports a limited feature set. Please report any technical or non-technical problems.
+Note: The language server is currently in an alpha stage. Please report any technical or non-technical problems.
 
 ![demo](docs/media/demo.gif)
 
@@ -20,7 +20,7 @@ Note: The language server is currently in an alpha stage and only supports a lim
 
 - Only supports x86_64 Linux
 - Does not support the legacy Impala syntax
-- Go to definition is not available when your code has syntax errors
+- Workspace configuration must be in root project folder (TODO)
 
 
 ## Usage
