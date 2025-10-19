@@ -92,6 +92,12 @@ async function ensureConfigs() {
     const ensureConfig = async (config: Config) => {
         if (config.path && existsSync(config.path)) return; // already exists
         if (!config.defaultPath) return;
+        if (existsSync(config.defaultPath) && config.isGlobalConfig) {
+            // already exists at default path, just update vscode setting
+            const cfg = vscode.workspace.getConfiguration('artic');
+            cfg.update('globalConfig', config.defaultPath, vscode.ConfigurationTarget.Global);
+            return;
+        }
         const choice = await vscode.window.showInformationMessage(config.detailLabel, config.createLabel, 'Dismiss');
         if (choice === config.createLabel) {
             try {
@@ -119,7 +125,7 @@ async function ensureConfigs() {
     }
     const workspaceConfig: Config = {
         defaultPath: workspaceRoot ? path.join(workspaceRoot, 'artic.json') : undefined,
-        path: client.clientOptions.initializationOptions.workspaceConfig,
+        path: getWorkspaceConfigPath(),
         createLabel: 'Create workspace artic.json',
         detailLabel: 'Create an artic.json in the workspace root so projects can be configured.',
         template: workspaceConfigTemplate,
@@ -127,7 +133,7 @@ async function ensureConfigs() {
     }
     const globalConfig: Config = {
         defaultPath: path.join(process.env.HOME || '', 'artic-global.json'),
-        path: client.clientOptions.initializationOptions.globalConfig,
+        path: getWorkspaceConfigPath(),
         createLabel: 'Create global artic-global.json',
         detailLabel: 'Create a global artic-global.json in your home directory for shared projects.',
         template: globalConfigTemplate,
