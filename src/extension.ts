@@ -5,6 +5,7 @@ import { execSync } from 'child_process';
 import { existsSync, writeFileSync } from 'fs';
 
 let client: LanguageClient;
+let expectedStop = false;
 
 const globalConfigTemplate = `{
     "artic-config": "1.0",
@@ -159,13 +160,14 @@ function startClient(context: vscode.ExtensionContext) {
             }
         };
         let restartFromCrash = false;
+        expectedStop = false;
 
         // Client options
         const clientOptions: LanguageClientOptions = {
-            documentSelector: [ 
+            documentSelector: [
                 { scheme: 'file', language: 'artic' },
                 { scheme: 'file', language: 'json', pattern: '**/{artic,artic-global}.json' }
-             ],
+            ],
             synchronize: {
                 fileEvents: [
                     vscode.workspace.createFileSystemWatcher('**/*.art'),
@@ -187,7 +189,7 @@ function startClient(context: vscode.ExtensionContext) {
 
                 let hasCrashed = restartFromCrash;
                 restartFromCrash = false;
-                
+
                 return {
                     workspaceConfig: getWorkspaceConfigPath(),
                     globalConfig: getGlobalConfigPath(),
@@ -206,8 +208,11 @@ function startClient(context: vscode.ExtensionContext) {
             serverOptions,
             clientOptions,
         );
-
         client.onDidChangeState((event) => {
+            if (expectedStop) {
+                expectedStop = false;
+                return;
+            }
             if (event.oldState === State.Running && event.newState === State.Stopped) { // Running -> Starting
                 restartFromCrash = true;
                 vscode.window.showWarningMessage(
@@ -222,8 +227,12 @@ function startClient(context: vscode.ExtensionContext) {
         });
 
         // Start the client (which also starts the server)
-        client.start()
-        ensureConfigs();
+        client.start().then(async () => {
+            ensureConfigs();
+        }).catch((error: any) => {
+            console.error('Failed to start Artic Language Server:', error);
+            vscode.window.showErrorMessage(`Failed to start Artic Language Server: ${error.message}`);
+        });
     } catch (error: any) {
         console.error('Failed to start Artic Language Server:', error);
         vscode.window.showErrorMessage(`Failed to start Artic Language Server: ${error.message}`);
@@ -235,8 +244,17 @@ export function activate(context: vscode.ExtensionContext) {
 
     // Register commands
     const restartCommand = vscode.commands.registerCommand('artic.restart', async () => {
-        if(client && client.isRunning()) client.stop().catch();
-        startClient(context);
+        if (client) {
+            if(client.isRunning()){
+                expectedStop = true;
+                await client.restart();
+            } else {
+                client.start();
+            }
+        } else {
+            startClient(context);
+        }
+        
     });
     context.subscriptions.push(restartCommand);
 
@@ -244,7 +262,7 @@ export function activate(context: vscode.ExtensionContext) {
         try {
             if (!client) return;
             await client.sendNotification('workspace/didChangeConfiguration', { settings: {} });
-        } catch (e:any) {
+        } catch (e: any) {
             vscode.window.showErrorMessage(`Failed to send reload: ${e.message}`);
         }
     });
