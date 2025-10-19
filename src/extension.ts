@@ -152,6 +152,7 @@ function startClient(context: vscode.ExtensionContext) {
                 cwd: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath
             }
         };
+        let restartFromCrash = false;
 
         // Client options
         const clientOptions: LanguageClientOptions = {
@@ -177,10 +178,14 @@ function startClient(context: vscode.ExtensionContext) {
             initializationOptions: () => {
                 console.log('Artic Language Server started successfully');
                 // client.outputChannel?.show(true);
+
+                let hasCrashed = restartFromCrash;
+                restartFromCrash = false;
                 
                 return {
                     workspaceConfig: getWorkspaceConfigPath(),
-                    globalConfig: getGlobalConfigPath()
+                    globalConfig: getGlobalConfigPath(),
+                    restartFromCrash: hasCrashed
                 };
             }
         };
@@ -195,6 +200,7 @@ function startClient(context: vscode.ExtensionContext) {
 
         client.onDidChangeState((event) => {
             if (event.oldState === 2 && event.newState === 1) { // Running -> Starting
+                restartFromCrash = true;
                 vscode.window.showWarningMessage(
                     `Artic Language Server has crashed. Consider checking the output for errors.`,
                     'Show Output'
