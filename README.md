@@ -20,7 +20,7 @@ Note: The language server is currently in an alpha stage. Please report any tech
 
 - Only supports x86_64 Linux
 - Does not support the legacy Impala syntax
-- Workspace configuration must be in root project folder (TODO)
+- Workspace configuration file must be in root workspace folder (TODO)
 
 
 ## Usage
