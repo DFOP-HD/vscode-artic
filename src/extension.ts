@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { LanguageClient, LanguageClientOptions, ServerOptions, TransportKind } from 'vscode-languageclient/node';
+import { LanguageClient, LanguageClientOptions, ServerOptions, TransportKind, State } from 'vscode-languageclient/node';
 import { execSync } from 'child_process';
 import { existsSync, writeFileSync } from 'fs';
 
@@ -187,6 +187,9 @@ function startClient(context: vscode.ExtensionContext) {
                     globalConfig: getGlobalConfigPath(),
                     restartFromCrash: hasCrashed
                 };
+            },
+            connectionOptions: {
+                maxRestartCount: 10,
             }
         };
 
@@ -199,10 +202,10 @@ function startClient(context: vscode.ExtensionContext) {
         );
 
         client.onDidChangeState((event) => {
-            if (event.oldState === 2 && event.newState === 1) { // Running -> Starting
+            if (event.oldState === State.Running && event.newState === State.Stopped) { // Running -> Starting
                 restartFromCrash = true;
                 vscode.window.showWarningMessage(
-                    `Artic Language Server has crashed. Consider checking the output for errors.`,
+                    `Artic Language Server has crashed. Restarting in safe mode...`,
                     'Show Output'
                 ).then(choice => {
                     if (choice === 'Show Output') {
