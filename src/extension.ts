@@ -189,6 +189,7 @@ function startClient(context: vscode.ExtensionContext) {
 
                 let hasCrashed = restartFromCrash;
                 restartFromCrash = false;
+                ensureConfigs(); // no await
 
                 return {
                     workspaceConfig: getWorkspaceConfigPath(),
@@ -228,7 +229,6 @@ function startClient(context: vscode.ExtensionContext) {
 
         // Start the client (which also starts the server)
         client.start();
-        ensureConfigs();
     } catch (error: any) {
         console.error('Failed to start Artic Language Server:', error);
         vscode.window.showErrorMessage(`Failed to start Artic Language Server: ${error.message}`);
