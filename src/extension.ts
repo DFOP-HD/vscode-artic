@@ -227,12 +227,8 @@ function startClient(context: vscode.ExtensionContext) {
         });
 
         // Start the client (which also starts the server)
-        client.start().then(async () => {
-            ensureConfigs();
-        }).catch((error: any) => {
-            console.error('Failed to start Artic Language Server:', error);
-            vscode.window.showErrorMessage(`Failed to start Artic Language Server: ${error.message}`);
-        });
+        client.start();
+        ensureConfigs();
     } catch (error: any) {
         console.error('Failed to start Artic Language Server:', error);
         vscode.window.showErrorMessage(`Failed to start Artic Language Server: ${error.message}`);
