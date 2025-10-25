@@ -14,6 +14,7 @@ Note: The language server is currently in an alpha stage. Please report any tech
 - Go to definition
 - Find references
 - Rename action
+- Code completion (available symbols)
 - Code snippets (for loops, function declarations, ...)
 
 ## Limitations
