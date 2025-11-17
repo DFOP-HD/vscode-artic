@@ -263,6 +263,47 @@ export function activate(context: vscode.ExtensionContext) {
         }
     });
     context.subscriptions.push(reloadConfigCommand);
+
+    const debugAstCommand = vscode.commands.registerCommand('artic.debugAst', async () => {
+        try {
+            if (!client || !client.isRunning()) {
+                vscode.window.showWarningMessage('Artic Language Server is not running');
+                return;
+            }
+
+            const editor = vscode.window.activeTextEditor;
+            if (!editor) {
+                vscode.window.showWarningMessage('No active editor');
+                return;
+            }
+
+            const document = editor.document;
+            const position = editor.selection.active;
+
+            // Send custom request to the language server
+            const params = {
+                textDocument: { uri: document.uri.toString() },
+                position: { line: position.line, character: position.character }
+            };
+
+            const result = await client.sendRequest('artic/debugAst', params);
+            if(result === null || result === undefined){
+                vscode.window.showInformationMessage('No AST node found at cursor position.');
+                return;
+            }
+            
+            // Show the AST in a new document
+            const astDoc = await vscode.workspace.openTextDocument({
+                content: result as string,
+                language: 'plaintext'
+            });
+            await vscode.window.showTextDocument(astDoc, vscode.ViewColumn.Beside);
+        } catch (e: any) {
+            vscode.window.showErrorMessage(`Failed to get AST: ${e.message}`);
+            console.error('Debug AST error:', e);
+        }
+    });
+    context.subscriptions.push(debugAstCommand);
 }
 
 export function deactivate(): Thenable<void> | undefined {

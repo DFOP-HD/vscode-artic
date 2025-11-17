@@ -67,6 +67,11 @@
         "command": "artic.reloadConfig",
         "title": "Reload Artic Configuration",
         "category": "Artic"
+      },
+      {
+        "command": "artic.debugAst",
+        "title": "Debug: Show AST Node at Cursor",
+        "category": "Artic"
       }
     ],
     "configuration": {
