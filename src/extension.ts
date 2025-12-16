@@ -198,7 +198,7 @@ function startClient(context: vscode.ExtensionContext) {
                 };
             },
             connectionOptions: {
-                maxRestartCount: 10,
+                maxRestartCount: 5,
             }
         };
 
