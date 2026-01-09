@@ -5,7 +5,7 @@ The language server is based on a fork of the Artic compiler frontend and contin
 
 Note: The language server is currently in an alpha stage. Please report any technical or non-technical problems.
 
-![demo](docs/media/demo.gif)
+![demo](vscode/docs/media/demo.gif)
 
 ## Features
 
@@ -140,7 +140,7 @@ Example:
 
 
 
-![config diagnostics](docs/media/config.png)
+![config diagnostics](vscode/docs/media/config.png)
 
 
 

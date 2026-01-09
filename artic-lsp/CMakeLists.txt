@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 project(artic-lsp VERSION 0.1.0 LANGUAGES CXX)
 
+set(BUILD_SHARED_LIBS OFF)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
@@ -33,7 +34,7 @@ target_include_directories(artic-lsp PUBLIC
     $<INSTALL_INTERFACE:include>
 )
 
-
+add_subdirectory(../artic artic)
 
 target_link_libraries(artic-lsp PUBLIC
     libartic
