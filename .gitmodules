@@ -1,3 +1,12 @@
 [submodule "artic-lsp"]
 	path = artic-lsp
 	url = git@github.com:DFOP-HD/artic-lsp.git
+[submodule "lsp-framework"]
+	path = lsp-framework
+	url = https://github.com/leon-bckl/lsp-framework.git
+[submodule "thorin"]
+	path = thorin
+	url = https://github.com/AnyDSL/thorin.git
+[submodule "json"]
+	path = json
+	url = https://github.com/nlohmann/json.git
