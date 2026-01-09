@@ -18,7 +18,6 @@ add_library(artic-lsp
     src/config.cpp
 )
 
-# target_include_directories(artic-lsp PUBLIC include)
 target_include_directories(artic-lsp PUBLIC ../artic/include)
 target_compile_options(artic-lsp PRIVATE -Wno-deprecated-declarations)
 target_include_directories(artic-lsp PUBLIC
@@ -26,8 +25,6 @@ target_include_directories(artic-lsp PUBLIC
     $<INSTALL_INTERFACE:include>
 )
 
-# find_package(lsp 1.3.0 EXACT REQUIRED)
-# target_link_libraries(artic-lsp PUBLIC lsp::lsp)
 include(FetchContent)
 message(STATUS "Fetching lsp-framework")
 FetchContent_Declare(
