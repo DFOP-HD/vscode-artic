@@ -58,7 +58,7 @@ function findArticBinary(): string {
         return serverPath;
     }
 
-    const bundled = path.join(__dirname, '..', 'artic', 'build', 'bin', 'artic');
+    const bundled = path.join(__dirname, '..', 'build', 'bin', 'artic');
     if (existsSync(bundled)) {
         return bundled;
     }

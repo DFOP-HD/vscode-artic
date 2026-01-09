@@ -13,7 +13,7 @@ set -euo pipefail
 
 ROOT_DIR=$(cd "$(dirname "$0")" && pwd)
 EXT_DIR="$ROOT_DIR"
-ARTIC_BIN="$ROOT_DIR/artic-lsp/build/bin/artic"
+ARTIC_BIN="$ROOT_DIR/../artic-lsp/build/bin/artic"
 
 echo "==> Building Artic LSP server"
 "$ROOT_DIR/build_lsp.sh"
@@ -26,8 +26,15 @@ fi
 echo "==> Preparing extension bundle location: $ARTIC_BIN"
 chmod +x "$ARTIC_BIN"
 
+mkdir -p "$EXT_DIR/build/bin"
+cp "$ARTIC_BIN" "$EXT_DIR/build/bin/artic"
+
+echo "==> Auditing and fixing vulnerabilities"
+npm audit fix
+
 echo "==> Installing extension dependencies"
 pushd "$EXT_DIR" >/dev/null
+
 # Use npm install to update lockfile if needed (ci would fail without matching lock)
 npm install
 

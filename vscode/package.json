@@ -118,15 +118,13 @@
     "vscode-languageclient": "^8.1.0"
   },
   "files": [
-    "icon.svg",
-    "README.md",
-    "LICENSE.md",
     "out/**",
-    "node_modules/**",
     "syntaxes/**",
     "language-configuration.json",
-    "artic-lsp/build/bin/artic",
-    "artic-lsp/build/lib/libartic.so",
-    "artic-lsp/build/lib/libthorin.so"
+    "build/bin/**",
+    "node_modules/**",
+    "icon.svg",
+    "README.md",
+    "LICENSE.md"
   ]
 }
