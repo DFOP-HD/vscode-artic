@@ -5,6 +5,9 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # set(CMAKE_CXX_COMPILER_ID "Clang")
 
+# Export compile commands for clangd
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
 add_library(artic-lsp
     include/compile.h
     include/config.h
@@ -26,23 +29,21 @@ target_include_directories(artic-lsp PUBLIC
 )
 
 include(FetchContent)
-message(STATUS "Fetching lsp-framework")
+
+set(FETCHCONTENT_QUIET OFF)
 FetchContent_Declare(
-    lsp 
+    lsp
     GIT_REPOSITORY https://github.com/leon-bckl/lsp-framework.git
     GIT_TAG cf82b9ad4c89e3dc75fefb58352749dad45c5c0d # 1.3.0
 )
-FetchContent_MakeAvailable(lsp)
-message(STATUS "Fetching lsp-framework - done")
-target_link_libraries(artic-lsp PUBLIC lsp)
-
-
-message(STATUS "Fetching nlohmann_json")
 FetchContent_Declare(
     nlohmann_json 
     GIT_REPOSITORY https://github.com/nlohmann/json.git
     GIT_TAG 55f93686c01528224f448c19128836e7df245f72 # 3.12.0
 )
-FetchContent_MakeAvailable(nlohmann_json)
-message(STATUS "Fetching nlohmann_json - done")
-target_link_libraries(artic-lsp PUBLIC nlohmann_json::nlohmann_json)
+
+FetchContent_MakeAvailable(lsp nlohmann_json)
+target_link_libraries(artic-lsp PUBLIC 
+    lsp 
+    nlohmann_json::nlohmann_json
+)
