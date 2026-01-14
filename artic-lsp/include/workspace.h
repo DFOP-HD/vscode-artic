@@ -2,6 +2,7 @@
 #define ARTIC_LS_PROJECT_H
 
 #include "artic/arena.h"
+#include "lsp/types.h"
 #include <vector>
 #include <string>
 #include <optional>
@@ -31,22 +32,96 @@ struct File {
 
 struct Project {
     using Identifier = std::string;
+    
+    // Unique project name
+    // May be referenced by other projects
     Identifier name;
-    fs::path origin; // config that declared this project
+
+    // Path to the project root directory
+    // FilePatterns are relative to this path
     fs::path root_dir;
 
-    std::vector<File*> files;
+    // Config that defines this project
+    fs::path origin; 
+
+    // A pattern which can be used to include or exclude one or more files.
+    // Exclude patterns start with '!' character.
+    std::vector<std::string> file_patterns;
+
+    // Expansion of file patterns
+    std::vector<fs::path> files;
+
+    // Names of other projects that this project depends on
+    // Projects will include all files from dependencies
     std::vector<Project::Identifier> dependencies; 
 
     std::vector<File*> collect_files();
     bool uses_file(const fs::path& file) const;
+
+    // -- internal parse info --
+    int depth = 100;
+};
+
+struct IncludeConfig {
+    // path to another artic.json
+    fs::path path;
+
+    // -- internal parse info --
+    std::string raw_path_string;
+    bool is_optional = false;
 };
 
 struct ConfigFile {
+    std::string version;
     fs::path path;
-    Project* default_project = nullptr;
-    std::vector<Project*> projects;
+    std::optional<Project::Identifier> default_project = std::nullopt;
+    std::vector<Project::Identifier> projects;
+    std::vector<IncludeConfig>       includes;
 };
+
+namespace config {
+    
+    struct ConfigParseResult {
+        ConfigFile config;
+        std::vector<Project> projects;
+    };
+
+    struct ConfigLog {
+        using Severity = lsp::DiagnosticSeverity;
+        struct Context {
+            std::string literal;
+        };
+        struct Message {
+            std::string message;
+            Severity severity;
+    
+            fs::path file;
+            std::optional<Context> context;
+        };
+        fs::path file_context;
+        std::vector<Message> messages;
+    
+        void error(std::string msg, std::optional<std::string> context=std::nullopt) { messages.push_back(make_message(Severity::Error,       std::move(msg), context)); }
+        void warn (std::string msg, std::optional<std::string> context=std::nullopt) { messages.push_back(make_message(Severity::Warning,     std::move(msg), context)); }
+        void info (std::string msg, std::optional<std::string> context=std::nullopt) { messages.push_back(make_message(Severity::Information, std::move(msg), context)); }
+    
+    private:
+        static std::string quote(std::string_view in) {
+            return '\"' + std::string(in) + '\"';
+        }
+        Message make_message(Severity s, std::string msg, std::optional<std::string> context) {
+            return Message{
+                .message=std::move(msg),
+                .severity=s,
+                .file=file_context, 
+                .context= context 
+                    ? std::make_optional(Context{quote(context.value())}) 
+                    : std::nullopt
+            };
+        }
+    };
+}
+
 
 class Workspace {
 public:
@@ -56,8 +131,11 @@ public:
 
     void reload(config::ConfigLog& log);
 
-    ConfigFile* instantiate_config(const fs::path& path);
-    
+    ConfigFile* instantiate_config(const IncludeConfig& origin, config::ConfigLog& log);
+    struct ProjectQuery {
+        Project* project = nullptr;
+        std::optional<config::ConfigLog> newly_loaded_configs_log = std::nullopt;
+    };
     Project* project_for_file(const fs::path& file) {
         auto project = find_config_recursive(file.parent_path(), fs::path(file));
         if(auto project = find_config_recursive(file.parent_path(), fs::path(file))) {
@@ -127,9 +205,8 @@ public:
     }
 
     Project* track_project(const Project::Identifier& id) {
-        if(!tracked_projects_.contains(id)) {
-            auto p = arena_.make_ptr<Project>(std::move(project));
-            tracked_projects_[id] = std::move(p);    
+        if(tracked_projects_.contains(id)) {
+            return nullptr;
         }
         return tracked_projects_.at(id).get();
     }
