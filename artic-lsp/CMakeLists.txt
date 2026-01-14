@@ -9,9 +9,6 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 include(cmake/Dependencies.cmake)
 
-# Export compile commands for clangd
-set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
-
 add_library(artic-lsp
     include/compile.h
     include/config.h

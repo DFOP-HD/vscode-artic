@@ -1,7 +1,6 @@
 #ifndef ARTIC_LS_CONFIG_H
 #define ARTIC_LS_CONFIG_H
 
-#include "workspace.h"
 #include "lsp/types.h"
 
 #include <vector>
@@ -10,11 +9,14 @@
 #include <filesystem>
 
 namespace artic::ls::workspace::config {
+namespace fs = std::filesystem;
+struct ConfigLog; struct ConfigDocument;
+using ProjectId = std::string;
 
 struct ProjectDefinition {
     // Unique project name.
     // May be referenced by other projects.
-    Project::Identifier name;
+    ProjectId name;
 
     // Path to the project root directory.
     // FilePatterns are relative to this path.
@@ -26,24 +28,22 @@ struct ProjectDefinition {
 
     // Names of other projects that this project depends on.
     // Projects will include all files from dependencies.
-    std::vector<Project::Identifier> dependencies;
+    std::vector<ProjectId> dependencies;
 
     // config where project was first defined
-    std::filesystem::path origin;
+    fs::path origin;
 
     // -- internal parse info --
     int depth = 100;
-    bool was_defined_in_global_config = false;
 };
 
 struct IncludeConfig {
     // path to another artic.json
-    std::filesystem::path path;
+    fs::path path;
 
     // -- internal parse info --
     std::string raw_path_string;
     bool is_optional = false;
-    bool is_global = false;
 };
 
 struct ConfigDocument {
@@ -65,10 +65,10 @@ struct ConfigLog {
         std::string message;
         Severity severity;
 
-        std::filesystem::path file;
+        fs::path file;
         std::optional<Context> context;
     };
-    std::filesystem::path file_context;
+    fs::path file_context;
     std::vector<Message> messages;
 
     void error(std::string msg, std::optional<std::string> context=std::nullopt) { messages.push_back(make_message(Severity::Error,       std::move(msg), context)); }
