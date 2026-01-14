@@ -1,6 +1,5 @@
 #include "config.h"
 
-#include "workspace.h"
 #include "artic/log.h"
 #include <fstream>
 #include <filesystem>
@@ -11,9 +10,6 @@
 #include <vector>
 #include <unordered_map>
 
-
-
-
 namespace artic::ls::workspace {
 
 // Config --------------------------------------------------------------------
@@ -21,26 +17,27 @@ namespace artic::ls::workspace {
 namespace config {
 static const char* HOME = std::getenv("HOME");
 
-static std::filesystem::path to_absolute_path(std::filesystem::path base_dir, std::string path) {
-    if(path.starts_with("/")) return std::filesystem::weakly_canonical(path);
+static fs::path to_absolute_path(fs::path base_dir, std::string path) {
+    if(path.starts_with("/")) return fs::weakly_canonical(path);
     if(path.starts_with("~/")) {
-        base_dir = std::filesystem::path(HOME);
+        base_dir = fs::path(HOME);
         path = path.substr(2);
     }
-    return std::filesystem::weakly_canonical(base_dir / path);
+    return fs::weakly_canonical(base_dir / path);
 }
 
 bool ConfigParser::parse() {
-    if(origin.path.empty()){
-        log.error("Config file path is empty", "include");
-        return false;
-    }
-    if (!fs::exists(origin.path)) {
-        if(!origin.is_optional) log.error("Config file does not exist: \"" + origin.path.string() + "\"", origin.raw_path_string);
-        return false;
-    }
-    log.file_context = origin.path;
     try {
+        if (origin.path.empty()) {
+            log.error("Config file path is empty", "include");
+            return false;
+        }
+        if (!fs::exists(origin.path)) {
+            if(!origin.is_optional) log.error("Config file does not exist: \"" + origin.path.string() + "\"", origin.raw_path_string);
+            return false;
+        }
+        log.file_context = origin.path;
+
         nlohmann::json j;
         std::ifstream is(origin.path);
         is >> j;
@@ -285,84 +282,16 @@ void FilePatternParser::dfs(size_t idx,const fs::path& base){
 
 } // config
 
-std::optional<ConfigFile> ConfigFile::parse(const IncludeConfig& origin, config::ConfigLog& log) {
+ConfigParse ConfigParse::parse(const fs::path& path, config::ConfigLog& log){
+    IncludeConfig origin{ .path = path, .raw_path_string = path.string(), .is_optional = false };
     config::ConfigParser parser(origin, log);
     bool success = parser.parse();
-    return success ? parser.config : std::nullopt;
-}
-
-// Util --------------------------------------------------------------------------
-
-namespace {
-
-struct CollectProjectsData {
-    config::ConfigLog& log;
-    std::map<Project::Identifier, Project>& projects;
-    std::unordered_set<fs::path> visited_configs;
-};
-
-static inline void collect_projects_recursive(const ConfigFile& config, CollectProjectsData& data, int depth = 0) {
-    log::info("Collecting projects from config: {}", config.path.string());
-    if(data.visited_configs.contains(config.path)) return;
-    data.visited_configs.insert(config.path);
-
-    auto& log = data.log;
-
-    log.file_context = config.path;
-
-    // Register Projects
-    for (const auto& proj : config.projects) {
-        if(data.projects.contains(proj.name)) {
-            // already registered
-            auto& val = data.projects[proj.name];
-            if(val.origin == proj.origin) {
-                if(depth < val.depth) {
-                    val.depth = depth;
-                    continue;
-                }
-            }
-            log.warn("ignoring duplicate definition of " + proj.name + " in " + proj.origin.string(), proj.name);
-            continue;
-        }
-
-        data.projects[proj.name] = proj;
-        data.projects[proj.name].depth = depth;
-    }
-    // Recurse included configs
-    for (const auto& include : config.includes) {
-        if (!fs::exists(include.path)) {
-            if(include.is_optional) continue;
-        }
-
-        if(auto include_config = ConfigFile::parse(include, log)) {
-            collect_projects_recursive(include_config.value(), data, depth+1);
-
-            log.file_context = config.path;
-            auto log_project_info = [&](const ConfigFile& cfg){
-                std::ostringstream s;
-
-                s << cfg.projects.size() << " + ?" << " projects: ";
-                s << std::endl;
-                for(const auto& file : cfg.projects) {
-                    s << "- " << file.name << std::endl;
-                }
-                log.info(s.str(), include.raw_path_string);
-            };
-            log_project_info(include_config.value());
-            log.info("Path: \"" + include.path.string() + "\"", include.raw_path_string);
-        }
+    if (success) {
+        return ConfigParse{ .success = true, .config = parser.config, .projects = parser.projects };
+    } else {
+        return ConfigParse{ .success = false, };
     }
 }
-
-
-
-static void instantiate_project(const Project& proj_def, Workspace& workspace) {
-    for (const auto& file : proj_def.files) {
-        workspace.track_file(file);
-    }
-}
-
-} // namespace
 
 // Workspace --------------------------------------------------------------------------
 
@@ -395,7 +324,7 @@ ConfigFile* Workspace::instantiate_config(const IncludeConfig& origin, config::C
     // recurse included configs
     for (const auto& include : parser.config.includes) {
         if(fs::exists(include.path)){
-            auto included_config = instantiate_config(include);
+            auto included_config = instantiate_config(include, log);
             if(!included_config) {
                 log.file_context = origin.path;
                 log.error("Failed to include config" + include.path.string(), include.raw_path_string);

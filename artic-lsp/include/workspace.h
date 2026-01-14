@@ -10,15 +10,10 @@
 #include <unordered_map>
 
 namespace artic::ls::workspace {
-
+namespace config { struct ConfigLog; }
 namespace fs = std::filesystem;
 template <typename T> using Ptr = arena_ptr<T>;
 template <typename T> using PtrVector = std::vector<Ptr<T>>;
-
-namespace config { struct ConfigLog; struct ConfigDocument;}
-struct Project;
-struct ConfigFile;
-
 
 struct File {
     fs::path path;
@@ -79,49 +74,13 @@ struct ConfigFile {
     std::vector<IncludeConfig>       includes;
 };
 
-namespace config {
-    
-    struct ConfigParseResult {
-        ConfigFile config;
-        std::vector<Project> projects;
-    };
 
-    struct ConfigLog {
-        using Severity = lsp::DiagnosticSeverity;
-        struct Context {
-            std::string literal;
-        };
-        struct Message {
-            std::string message;
-            Severity severity;
-    
-            fs::path file;
-            std::optional<Context> context;
-        };
-        fs::path file_context;
-        std::vector<Message> messages;
-    
-        void error(std::string msg, std::optional<std::string> context=std::nullopt) { messages.push_back(make_message(Severity::Error,       std::move(msg), context)); }
-        void warn (std::string msg, std::optional<std::string> context=std::nullopt) { messages.push_back(make_message(Severity::Warning,     std::move(msg), context)); }
-        void info (std::string msg, std::optional<std::string> context=std::nullopt) { messages.push_back(make_message(Severity::Information, std::move(msg), context)); }
-    
-    private:
-        static std::string quote(std::string_view in) {
-            return '\"' + std::string(in) + '\"';
-        }
-        Message make_message(Severity s, std::string msg, std::optional<std::string> context) {
-            return Message{
-                .message=std::move(msg),
-                .severity=s,
-                .file=file_context, 
-                .context= context 
-                    ? std::make_optional(Context{quote(context.value())}) 
-                    : std::nullopt
-            };
-        }
-    };
-}
-
+struct ConfigParse {
+    bool success;
+    ConfigFile config;
+    std::vector<Project> projects;
+    static ConfigParse parse(const fs::path& path, config::ConfigLog& log); // defined in config.cpp
+};
 
 class Workspace {
 public:
@@ -131,11 +90,19 @@ public:
 
     void reload(config::ConfigLog& log);
 
+    Project* discover_project_for_file(fs::path file, config::ConfigLog& log) {
+        if(auto project = find_config_recursive(file.parent_path(), fs::path(file))) {
+            return project;
+        }
+        return nullptr;
+
+    }
+
     ConfigFile* instantiate_config(const IncludeConfig& origin, config::ConfigLog& log);
-    struct ProjectQuery {
-        Project* project = nullptr;
-        std::optional<config::ConfigLog> newly_loaded_configs_log = std::nullopt;
-    };
+    // struct ProjectQuery {
+    //     Project* project = nullptr;
+    //     std::optional<config::ConfigLog> newly_loaded_configs_log = std::nullopt;
+    // };
     Project* project_for_file(const fs::path& file) {
         auto project = find_config_recursive(file.parent_path(), fs::path(file));
         if(auto project = find_config_recursive(file.parent_path(), fs::path(file))) {

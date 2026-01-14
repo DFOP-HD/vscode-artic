@@ -58,7 +58,7 @@ public:
     std::optional<Compiler> compile;
 
     void reload_workspace(const std::string& active_file = {});
-    void publish_config_diagnostics(const workspace::config::ConfigLog& log);
+    void publish_config_diagnostics(const workspace::config::config::ConfigLog& log);
 };
 
 } // namespace artic::ls

@@ -10,15 +10,49 @@
 #include <filesystem>
 
 namespace artic::ls::workspace::config {
-struct ConfigLog; struct ConfigDocument;
-using ProjectId = std::string;
+
+    
+struct ConfigLog {
+    using Severity = lsp::DiagnosticSeverity;
+    struct Context {
+        std::string literal;
+    };
+    struct Message {
+        std::string message;
+        Severity severity;
+
+        fs::path file;
+        std::optional<Context> context;
+    };
+    fs::path file_context;
+    std::vector<Message> messages;
+
+    void error(std::string msg, std::optional<std::string> context=std::nullopt) { messages.push_back(make_message(Severity::Error,       std::move(msg), context)); }
+    void warn (std::string msg, std::optional<std::string> context=std::nullopt) { messages.push_back(make_message(Severity::Warning,     std::move(msg), context)); }
+    void info (std::string msg, std::optional<std::string> context=std::nullopt) { messages.push_back(make_message(Severity::Information, std::move(msg), context)); }
+
+private:
+    static std::string quote(std::string_view in) {
+        return '\"' + std::string(in) + '\"';
+    }
+    Message make_message(Severity s, std::string msg, std::optional<std::string> context) {
+        return Message{
+            .message=std::move(msg),
+            .severity=s,
+            .file=file_context, 
+            .context= context 
+                ? std::make_optional(Context{quote(context.value())}) 
+                : std::nullopt
+        };
+    }
+};
 
 struct ConfigParser {
-    ConfigParser(const IncludeConfig& origin, ConfigLog& log) 
+    ConfigParser(const IncludeConfig& origin, config::ConfigLog& log) 
         : origin(origin), log(log), config()
     {}
     IncludeConfig origin;
-    ConfigLog& log;
+    config::ConfigLog& log;
 
     // out
     ConfigFile config;
@@ -68,10 +102,10 @@ private:
     bool is_wildcard(const std::string& s){ return s.find('*') != std::string::npos || s.find('?') != std::string::npos; };
 
     void expand_home() {
-        if (pattern[0] == '~') {
+        if (pattern.starts_with("~/")) {
             const char* home = std::getenv("HOME");
             root = home ? home : fs::path("/");
-            pattern.erase(0, 1);
+            pattern.erase(0, 2);
         }
         if(pattern[0] == '/') {
             root = fs::path("/");
