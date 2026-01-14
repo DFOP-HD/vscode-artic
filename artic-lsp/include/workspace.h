@@ -2,6 +2,7 @@
 #define ARTIC_LS_PROJECT_H
 
 #include "artic/arena.h"
+#include "artic/log.h"
 #include "lsp/types.h"
 #include <vector>
 #include <string>
@@ -50,9 +51,6 @@ struct Project {
     // Projects will include all files from dependencies
     std::vector<Project::Identifier> dependencies; 
 
-    std::vector<File*> collect_files();
-    bool uses_file(const fs::path& file) const;
-
     // -- internal parse info --
     int depth = 100;
 };
@@ -91,39 +89,35 @@ public:
     void reload(config::ConfigLog& log);
 
     Project* discover_project_for_file(fs::path file, config::ConfigLog& log) {
-        if(auto project = find_config_recursive(file.parent_path(), fs::path(file))) {
-            return project;
-        }
-        return nullptr;
-
-    }
-
-    ConfigFile* instantiate_config(const IncludeConfig& origin, config::ConfigLog& log);
-    // struct ProjectQuery {
-    //     Project* project = nullptr;
-    //     std::optional<config::ConfigLog> newly_loaded_configs_log = std::nullopt;
-    // };
-    Project* project_for_file(const fs::path& file) {
-        auto project = find_config_recursive(file.parent_path(), fs::path(file));
-        if(auto project = find_config_recursive(file.parent_path(), fs::path(file))) {
+        if (project_for_file_cache_.contains(file)) return project_for_file_cache_.at(file).get();
+        if (auto project = find_config_recursive(file.parent_path(), file, log)) {
             project_for_file_cache_[file] = project;
             return project;
         }
         return nullptr;
     }
+    
+    void mark_file_dirty(const fs::path& file);
+    void set_file_content(const fs::path& file, std::string&& content);
+    
+    fs::path workspace_root;
 
-    Project* find_config_recursive(fs::path dir, const fs::path& file) {
-        if(dir == fs::path("")) return nullptr;
-        if(auto config = find_config_in_dir(dir, file)) {
-            if(auto project = find_project_in_config(*config, file)) {
-                return project;
+private:
+    ConfigFile* instantiate_config(const IncludeConfig& origin, config::ConfigLog& log);
+
+    Project* find_config_recursive(fs::path dir, const fs::path& file, config::ConfigLog& log) {
+        while(dir != fs::path("")) {
+            if(auto config = find_config_in_dir(dir, file, log)) {
+                if(auto project = find_project_in_config_using_file(*config, file, log)) {
+                    return project;
+                }
             }
+            dir = dir.parent_path();
         }
-        find_config_recursive(dir.parent_path(), file);
         return nullptr;
     }
-
-    ConfigFile* find_config_in_dir(fs::path dir, const fs::path& file) {
+    
+    ConfigFile* find_config_in_dir(fs::path dir, const fs::path& file, config::ConfigLog& log) {
         static constexpr std::string_view file_names[] = {
             ".artic-lsp",
             "artic.json"
@@ -136,48 +130,53 @@ public:
                 break;
             }
         }
-        if(tracked_configs_.contains(path)) return tracked_configs_.at(path).get();
-        if(auto config = instantiate_config(path)) {
+        if (tracked_configs_.contains(path)) return tracked_configs_.at(path).get();
+        if (auto config = instantiate_config(IncludeConfig{.path = path}, log)) {
             tracked_configs_[path] = std::move(config);
-            return config.get();
+            return config;
         }
-
+    
         return nullptr;
     }
-
-    Project* find_project_in_config(const ConfigFile& config, const fs::path& file){
-        for (const auto& project : config.projects) {
-            for (const auto& f : project->files) {
-                if (f->path == file) {
+    
+    Project* find_project_in_config_using_file(const ConfigFile& config, const fs::path& file, config::ConfigLog& log){
+        for (const auto& project_id : config.projects) {
+            if(!tracked_projects_.contains(project_id)) continue; 
+            auto& project = tracked_projects_.at(project_id);
+            auto files = files_for_project(*project);
+            for (const auto& f : files) {
+                // Project uses file
+                if(f->path == file) {
                     return project.get();
                 }
             }
         }
+        // No project found, use default project if one is defined in this config
+        if(config.default_project && tracked_projects_.contains(config.default_project.value())) {
+            return tracked_projects_.at(config.default_project.value()).get();
+        }
         return nullptr;
     }
 
-    
-    void mark_file_dirty(const fs::path& file);
-    void set_file_content(const fs::path& file, std::string&& content);
-    
-    fs::path workspace_root;
-    // fs::path workspace_config_path;
-    // fs::path global_config_path;
-    File* track_file(const fs::path& file) {
-        if(!tracked_files_.contains(file)) {
-            auto f = arena_.make_ptr<File>(file);
-            tracked_files_[file] = std::move(f);    
+    std::vector<File*> files_for_project(const Project& project) {
+        std::vector<File*> res;
+        for (const auto& path : project.files) {
+            if (!tracked_files_.contains(path)) {
+                tracked_files_[path] = arena_.make_ptr<File>(path);
+            }
+            res.push_back(tracked_files_.at(path).get());
         }
-        return tracked_files_.at(file).get();
+        return res;
     }
 
-    Project* track_project(const Project::Identifier& id) {
-        if(tracked_projects_.contains(id)) {
-            return nullptr;
+    std::vector<File*> files_for_project(const Project::Identifier& project_id) {
+        if(tracked_projects_.contains(project_id)) {
+            auto& project = tracked_projects_.at(project_id);
+            return files_for_project(*project);
         }
-        return tracked_projects_.at(id).get();
+        log::info("Querying files for unknown project '{}'", project_id);
+        return {};
     }
-private:
     
     std::unordered_map<fs::path, Ptr<Project>> project_for_file_cache_;
 
