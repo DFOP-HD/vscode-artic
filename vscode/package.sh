@@ -16,7 +16,7 @@ EXT_DIR="$ROOT_DIR"
 ARTIC_BIN="$ROOT_DIR/../artic-lsp/build/bin/artic"
 
 echo "==> Building Artic LSP server"
-"$ROOT_DIR/build_lsp.sh"
+"$ROOT_DIR/build-lsp.sh"
 
 if [[ ! -x "$ARTIC_BIN" ]]; then
   echo "Error: Built Artic binary not found at $ARTIC_BIN"

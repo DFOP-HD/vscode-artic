@@ -36,7 +36,7 @@ static std::optional<std::string> read_file(const std::string& file) {
 }
 
 void File::read() {
-    if (!text) // could do that to avoid re-reading, but force re-reading does not take too long so do it just to be sure
+    if (!text)
         text = read_file(path);
     if (!text) log::error("Could not read file {}", path);
 }
@@ -83,6 +83,7 @@ ConfigFile* Workspace::instantiate_config(const IncludeConfig& origin, config::C
     if(tracked_configs_.contains(origin.path)) {
         return tracked_configs_.at(origin.path).get();
     }
+    log::info("Instantiating config: {}", origin.path.string());
 
     // std::map<Project::Identifier, Project> project_defs;
     // CollectProjectsData data {.log = log, .projects=project_defs };
@@ -166,13 +167,6 @@ ConfigFile* Workspace::instantiate_config(const IncludeConfig& origin, config::C
 }
 
 
-
-
-
-
-    
-
-
 // Project Registry --------------------------------------------------------------------
 
 // static inline void print_project(const Project& proj, int ind = 0){
@@ -221,5 +215,7 @@ ConfigFile* Workspace::instantiate_config(const IncludeConfig& origin, config::C
 //     log::info("--- Project Registry ---");
 //     std::clog << std::endl;
 // }
+
+
 
 } // namespace artic::ls

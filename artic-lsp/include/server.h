@@ -42,7 +42,7 @@ public:
 
     void send_message(const std::string& message, lsp::MessageType type);
     void compile_files(std::span<const workspace::File*> files);
-    void compile_file(const std::filesystem::path& file, std::string* new_content = nullptr);
+    void compile_this_and_related_files(const std::filesystem::path& file, std::string* new_content = nullptr);
     void ensure_compile(std::string_view file_view);
 
     enum class FileType { SourceFile, ConfigFile };
@@ -58,7 +58,7 @@ public:
     std::optional<Compiler> compile;
 
     void reload_workspace(const std::string& active_file = {});
-    void publish_config_diagnostics(const workspace::config::config::ConfigLog& log);
+    void publish_config_diagnostics(const workspace::config::ConfigLog& log);
 };
 
 } // namespace artic::ls

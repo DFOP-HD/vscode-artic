@@ -148,11 +148,7 @@ void Server::setup_events_initialization() {
         log::info("Global config path: {}", init_data.global_config_path);
 
         safe_mode_ = init_data.restart_from_crash;
-        workspace_ = std::make_unique<workspace::Workspace>(
-            init_data.workspace_root, 
-            init_data.workspace_config_path, 
-            init_data.global_config_path
-        );
+        workspace_ = std::make_unique<workspace::Workspace>(init_data.workspace_root);
         
         return reqst::Initialize::Result {
             .capabilities = lsp::ServerCapabilities{
@@ -239,7 +235,7 @@ void Server::setup_events_modifications() {
             // and we don't want to invalidate the definition while looking it up
             bool already_compiled = compile && compile->locator.data(path);
             if(!already_compiled)
-                compile_file(path);
+                compile_this_and_related_files(path);
         }
     });
     message_handler_.add<notif::TextDocument_DidChange>([this](notif::TextDocument_DidChange::Params&& params) {
@@ -255,7 +251,7 @@ void Server::setup_events_modifications() {
         // workspace_->mark_file_dirty(file);
 
         auto& content = std::get<lsp::TextDocumentContentChangeEvent_Text>(params.contentChanges[0]).text;
-        compile_file(file, &content);
+        compile_this_and_related_files(file, &content);
     });
 
     message_handler_.add<notif::TextDocument_DidSave>([this](notif::TextDocument_DidSave::Params&& params) {
@@ -1183,55 +1179,27 @@ void Server::setup_events_completion() {
 //
 // -----------------------------------------------------------------------------
 
-void Server::compile_file(const std::filesystem::path& file, std::string* new_content) {
+void Server::compile_this_and_related_files(const std::filesystem::path& file, std::string* new_content) {
     Timer _("Compile Files");
 
-
-    std::vector<const workspace::File*> files;
-    compile.emplace();
-    compile->active_file = file;
-
-    if (auto proj = workspace_->project_for_file(file)) {
-        if (new_content) 
-            workspace_->set_file_content(file, std::move(*new_content));
-
-        // known project    
-        log::info("Compiling file {} (project '{}')", file, proj.value()->name);
-
-        files = proj.value()->collect_files();
-    } else {
-        // default project
-        const auto& default_proj = workspace_->default_project();
-        
-        log::info("Compiling file {} (not in workspace -> using default project {})", file, default_proj->name);
-        
-        files = default_proj->collect_files();
-        auto temp_file = std::make_unique<workspace::File>(file);
-        if (new_content) {
-            temp_file->text = std::move(*new_content);
-        } else {
-            temp_file->read();
-        }
-        
-        files.push_back(temp_file.get());
-
-        // keep the temporary file alive for diagnostics
-        compile->temporary_files.push_back(std::move(temp_file));
-    }
+    workspace::config::ConfigLog cfg_log;
+    auto files = workspace_->collect_project_files(file, cfg_log);
     
     if (files.empty()) {
-        log::info("no input files (compile_files)");
+        log::info("No input files to compile");
         return;
     }
-
     log::info("Compiling {} file(s)", files.size());
 
+    // Initialize
+    compile.emplace();
     if(safe_mode_) {
         compile->exclude_non_parsed_files = true;
         log::info("Using safe mode");
     }
 
-    compile->compile_files(files);
+    // Compile
+    compile->compile_files(files, file);
 
     if(safe_mode_ && compile->parsed_all) {
         safe_mode_ = false;
@@ -1246,14 +1214,6 @@ void Server::compile_file(const std::filesystem::path& file, std::string* new_co
     } else {
         log::info("Compile failed");
     }
-
-    // log::Output out(std::clog, false);
-    // Printer p(out);
-    // p.print_additional_node_info = true;
-    // for(auto& [decl, _]: compile->name_map.files[file].references_of) {
-    //     if(decl->is_top_level)
-    //         decl->print(p);
-    // }
 
     auto convert_diagnostic = [](const Diagnostic& diag) -> lsp::Diagnostic {
         lsp::Diagnostic lsp_diag;
@@ -1294,7 +1254,7 @@ void Server::ensure_compile(std::string_view file_view) {
         throw lsp::RequestError(lsp::Error::InvalidParams, "File is not an Artic source file");
     }
     bool already_compiled = compile && compile->locator.data(file);
-    if (!already_compiled) compile_file(file);
+    if (!already_compiled) compile_this_and_related_files(file);
     if (!compile) throw lsp::RequestError(lsp::Error::InternalError, "Did not get a compilation result");
 }
 
@@ -1363,11 +1323,7 @@ void make_config_diagnostic(const workspace::config::ConfigLog::Message& msg,
     if(display_count == 0) diags[file].push_back(diag);
 };
 
-void Server::reload_workspace(const std::string& active_file) {
-    Timer _("Reload Workspace");
-    log::info("Reloading workspace configuration");
-    workspace::config::ConfigLog log;
-    workspace_->reload(log);
+void Server::publish_config_diagnostics(const workspace::config::ConfigLog& log) {
     const bool print_to_console = true;
     if(print_to_console) {
         log::info("Reloaded Workspace");
@@ -1383,8 +1339,8 @@ void Server::reload_workspace(const std::string& active_file) {
 
             log::info("[{}] {}: {}", s, e.file, e.message);
         }
-        log::info("--- Config Log ---");
-        workspace_->projects_.print();
+        // log::info("--- Config Log ---");
+        // workspace_->projects_.print();
     }
 
     FileDiags fileDiags;
@@ -1393,11 +1349,6 @@ void Server::reload_workspace(const std::string& active_file) {
     for (const auto& e : log.messages) {
         // Diagnosics for the file itself
         make_config_diagnostic(e, std::nullopt, fileDiags);
-
-        // Propagate errors to the workspace config file
-        if(e.severity == lsp::DiagnosticSeverity::Error) {
-            make_config_diagnostic(e, workspace_->workspace_config_path, fileDiags);
-        }
     }
 
     // Send diagnostics
@@ -1409,10 +1360,17 @@ void Server::reload_workspace(const std::string& active_file) {
             }
         );
     }
+}
 
-    if(compile){
-        auto file = compile->active_file;
-        compile_file(file);
+void Server::reload_workspace(const std::string& active_file) {
+    Timer _("Reload Workspace");
+    log::info("Reloading workspace configuration");
+    workspace::config::ConfigLog log;
+    workspace_->reload(log);
+    
+    // Recompile last compile
+    if (compile) {
+        compile_this_and_related_files(compile->active_file);
     }
 }
 

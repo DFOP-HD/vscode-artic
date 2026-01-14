@@ -71,6 +71,7 @@ bool ConfigParser::parse() {
         if (auto pj = j.find("projects"); pj != j.end()) {
             for (auto& pj : *pj) {
                 if(auto proj = parse_project(pj)) {
+                    log::info("Parsed project: {}", proj->name);
                     projects.push_back(*proj);
                     config.projects.push_back(proj->name);
                 }
@@ -281,16 +282,5 @@ void FilePatternParser::dfs(size_t idx,const fs::path& base){
 };
 
 } // config
-
-ConfigParse ConfigParse::parse(const fs::path& path, config::ConfigLog& log){
-    IncludeConfig origin{ .path = path, .raw_path_string = path.string(), .is_optional = false };
-    config::ConfigParser parser(origin, log);
-    bool success = parser.parse();
-    if (success) {
-        return ConfigParse{ .success = true, .config = parser.config, .projects = parser.projects };
-    } else {
-        return ConfigParse{ .success = false, };
-    }
-}
 
 } // namespace artic::ls

@@ -73,20 +73,36 @@ struct ConfigFile {
 };
 
 
-struct ConfigParse {
-    bool success;
-    ConfigFile config;
-    std::vector<Project> projects;
-    static ConfigParse parse(const fs::path& path, config::ConfigLog& log); // defined in config.cpp
-};
-
 class Workspace {
 public:
+    fs::path workspace_root;
+
     Workspace(const fs::path& workspace_root)
         : workspace_root(workspace_root)
     {}
 
     void reload(config::ConfigLog& log);
+
+    void mark_file_dirty(const fs::path& file);
+    void set_file_content(const fs::path& file, std::string&& content);
+
+    // Collect all files that belong to the project containing the given file
+    // If no project is found, return just the given file
+    // The project config might not be known yet, therefore we may need to look for it and initialize it, hence the log output
+    std::vector<File*> collect_project_files(fs::path file, config::ConfigLog& log) {
+        if (auto project = discover_project_for_file(file, log)) {
+            auto files = files_for_project(*project);
+            bool is_default_project = !uses_file(*project, file);
+            if (is_default_project) {
+                files.push_back(tracked_file(file));
+            }
+            log::info("Compiling file '{}' in project '{}' with {} files {}", file, project->name, files.size(), is_default_project ? " (default project)" : "");
+            return files;
+        }
+        return {tracked_file(file)};
+    }
+private:
+    ConfigFile* instantiate_config(const IncludeConfig& origin, config::ConfigLog& log);
 
     Project* discover_project_for_file(fs::path file, config::ConfigLog& log) {
         if (project_for_file_cache_.contains(file)) return project_for_file_cache_.at(file).get();
@@ -96,14 +112,6 @@ public:
         }
         return nullptr;
     }
-    
-    void mark_file_dirty(const fs::path& file);
-    void set_file_content(const fs::path& file, std::string&& content);
-    
-    fs::path workspace_root;
-
-private:
-    ConfigFile* instantiate_config(const IncludeConfig& origin, config::ConfigLog& log);
 
     Project* find_config_recursive(fs::path dir, const fs::path& file, config::ConfigLog& log) {
         while(dir != fs::path("")) {
@@ -131,7 +139,8 @@ private:
             }
         }
         if (tracked_configs_.contains(path)) return tracked_configs_.at(path).get();
-        if (auto config = instantiate_config(IncludeConfig{.path = path}, log)) {
+        IncludeConfig origin{ .path = path };
+        if (auto config = instantiate_config(origin, log)) {
             tracked_configs_[path] = std::move(config);
             return config;
         }
@@ -141,30 +150,38 @@ private:
     
     Project* find_project_in_config_using_file(const ConfigFile& config, const fs::path& file, config::ConfigLog& log){
         for (const auto& project_id : config.projects) {
-            if(!tracked_projects_.contains(project_id)) continue; 
-            auto& project = tracked_projects_.at(project_id);
-            auto files = files_for_project(*project);
-            for (const auto& f : files) {
-                // Project uses file
-                if(f->path == file) {
-                    return project.get();
-                }
+            if(auto project = try_get_project(project_id); project && uses_file(*project, file)) {
+                return project;
             }
         }
-        // No project found, use default project if one is defined in this config
-        if(config.default_project && tracked_projects_.contains(config.default_project.value())) {
-            return tracked_projects_.at(config.default_project.value()).get();
+        if(config.default_project) {
+            return try_get_project(*config.default_project);
         }
         return nullptr;
     }
 
+    bool uses_file(const Project& project, const fs::path& file) const {
+        for (const auto& f : project.files) {
+            if (f == file) return true;
+        }
+        for (const auto& dep_id : project.dependencies) {
+            if(auto dep = try_get_project(dep_id)) {
+                if(uses_file(*dep, file)) return true;
+            }
+        }
+        return false;
+    }
+
     std::vector<File*> files_for_project(const Project& project) {
         std::vector<File*> res;
-        for (const auto& path : project.files) {
-            if (!tracked_files_.contains(path)) {
-                tracked_files_[path] = arena_.make_ptr<File>(path);
+        for (const auto& f : project.files) {
+            res.push_back(tracked_file(f));
+        }
+        for (const auto& dep_id : project.dependencies) {
+            if(auto dep = try_get_project(dep_id)) {
+                auto dep_files = files_for_project(dep_id);
+                res.insert(res.end(), dep_files.begin(), dep_files.end());
             }
-            res.push_back(tracked_files_.at(path).get());
         }
         return res;
     }
@@ -174,15 +191,30 @@ private:
             auto& project = tracked_projects_.at(project_id);
             return files_for_project(*project);
         }
-        log::info("Querying files for unknown project '{}'", project_id);
         return {};
     }
+
+    File* tracked_file(const fs::path& file) {
+        if (!tracked_files_.contains(file)) {
+            // tracked_files_[file] = arena_.make_ptr<File>(file); // crash
+            tracked_files_.insert({file, arena_.make_ptr<File>(file)});
+        }
+        return tracked_files_.at(file).get();
+    }
+
+    Project* try_get_project(const Project::Identifier& project_id)  const{
+        if(tracked_projects_.contains(project_id)) {
+            return tracked_projects_.at(project_id).get();
+        }
+        return nullptr;
+    }
     
-    std::unordered_map<fs::path, Ptr<Project>> project_for_file_cache_;
+    using path_hash = std::string;
+    std::unordered_map<path_hash, Ptr<Project>> project_for_file_cache_;
 
     std::unordered_map<Project::Identifier, Ptr<Project>> tracked_projects_;
-    std::unordered_map<fs::path, Ptr<File>> tracked_files_;
-    std::unordered_map<fs::path, Ptr<ConfigFile>> tracked_configs_;
+    std::unordered_map<path_hash, Ptr<File>> tracked_files_;
+    std::unordered_map<path_hash, Ptr<ConfigFile>> tracked_configs_;
     Arena arena_;
 };
 
