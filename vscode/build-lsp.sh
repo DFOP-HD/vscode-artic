@@ -1,5 +1,10 @@
 #!/bin/bash
 set -e
 
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 # Navigate to artic directory
-cd "$(dirname "$0")/../artic-lsp" && ./build.sh
+cd "$SCRIPT_DIR/../artic-lsp"
+./build.sh
+mkdir -p "$SCRIPT_DIR/build/bin"
+cp "build/bin/artic" "$SCRIPT_DIR/build/bin/artic"
+

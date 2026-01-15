@@ -27,36 +27,34 @@ struct ConfigLog {
     fs::path file_context;
     std::vector<Message> messages;
 
-    void error(std::string msg, std::optional<std::string> context=std::nullopt) { messages.push_back(make_message(Severity::Error,       std::move(msg), context)); }
-    void warn (std::string msg, std::optional<std::string> context=std::nullopt) { messages.push_back(make_message(Severity::Warning,     std::move(msg), context)); }
-    void info (std::string msg, std::optional<std::string> context=std::nullopt) { messages.push_back(make_message(Severity::Information, std::move(msg), context)); }
+    void error(std::string msg, std::string context="") { messages.push_back(make_message(Severity::Error,       std::move(msg), context)); }
+    void warn (std::string msg, std::string context="") { messages.push_back(make_message(Severity::Warning,     std::move(msg), context)); }
+    void info (std::string msg, std::string context="") { messages.push_back(make_message(Severity::Information, std::move(msg), context)); }
 
 private:
     static std::string quote(std::string_view in) {
         return '\"' + std::string(in) + '\"';
     }
-    Message make_message(Severity s, std::string msg, std::optional<std::string> context) {
+    Message make_message(Severity s, std::string msg, std::string context) {
         return Message{
-            .message=std::move(msg),
-            .severity=s,
-            .file=file_context, 
-            .context= context 
-                ? std::make_optional(Context{quote(context.value())}) 
-                : std::nullopt
+            .message = std::move(msg),
+            .severity = s,
+            .file = file_context, 
+            .context = context.empty() ? std::make_optional(Context{.literal=quote(context)}) : std::nullopt
         };
     }
 };
 
 struct ConfigParser {
     ConfigParser(const IncludeConfig& origin, config::ConfigLog& log) 
-        : origin(origin), log(log), config()
+        : origin(origin), log(log)
     {}
     IncludeConfig origin;
     config::ConfigLog& log;
 
     // out
-    ConfigFile config;
-    std::vector<Project> projects;
+    ConfigFile config{};
+    std::vector<Project> projects{};
 
     bool parse();
 private:

@@ -58,52 +58,33 @@ void File::read() {
 
 // Workspace --------------------------------------------------------------------
 
-
-
-void Workspace::mark_file_dirty(const std::filesystem::path& file){
-    tracked_files_.erase(file);
-}
-void Workspace::set_file_content(const std::filesystem::path& file, std::string&& content){
-    if (tracked_files_.contains(file)){
-        tracked_files_.at(file)->text = std::move(content);
-    } else  {
-        // TODO?
-    }
-}
-
 void Workspace::reload(config::ConfigLog& log) {
-    tracked_projects_.clear();
-    tracked_files_.clear();
-    tracked_configs_.clear();
-    arena_ = Arena();
+    projects_.clear();
+    files_.clear();
+    configs_.clear();
+    arena_ = std::make_unique<Arena>();
     project_for_file_cache_.clear();
 }
 
 ConfigFile* Workspace::instantiate_config(const IncludeConfig& origin, config::ConfigLog& log) {
-    if(tracked_configs_.contains(origin.path)) {
-        return tracked_configs_.at(origin.path).get();
+    if(configs_.contains(origin.path)) {
+        return configs_.at(origin.path).get();
     }
     log::info("Instantiating config: {}", origin.path.string());
-
-    // std::map<Project::Identifier, Project> project_defs;
-    // CollectProjectsData data {.log = log, .projects=project_defs };
-
-    // IncludeConfig origin  { .path = path, .raw_path_string = path, .is_optional = false };
     config::ConfigParser parser(origin, log);
     bool success = parser.parse();
     if (!success) return nullptr;
 
     // track config
-    tracked_configs_[origin.path] = arena_.make_ptr<ConfigFile>(parser.config);
-
+    configs_[origin.path] = arena_->make_ptr<ConfigFile>(parser.config);
     // track projects
     for (const auto& project : parser.projects){
-        if(tracked_projects_.contains(project.name)) {
+        if(projects_.contains(project.name)) {
             log.file_context = origin.path;
             log.warn("ignoring duplicate definition of " + project.name + " in " + project.origin.string(), project.name);
             continue;
         }
-        tracked_projects_[project.name] = arena_.make_ptr<Project>(project); // copy
+        projects_[project.name] = arena_->make_ptr<Project>(project); // copy
     }
     
     // recurse included configs
@@ -163,7 +144,7 @@ ConfigFile* Workspace::instantiate_config(const IncludeConfig& origin, config::C
 
     log.file_context = "";
 
-    return tracked_configs_.at(origin.path).get();
+    return configs_.at(origin.path).get();
 }
 
 

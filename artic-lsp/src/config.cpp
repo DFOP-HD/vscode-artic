@@ -5,10 +5,8 @@
 #include <filesystem>
 #include <fnmatch.h>
 #include <iostream>
-#include <memory>
 #include <optional>
 #include <vector>
-#include <unordered_map>
 
 namespace artic::ls::workspace {
 
@@ -105,7 +103,6 @@ bool ConfigParser::parse() {
                     include.is_optional = true;
                 }
                 include.path = to_absolute_path(origin.path.parent_path(), path);
-                include.path = fs::weakly_canonical(include.path);
 
                 config.includes.push_back(std::move(include));
             }
