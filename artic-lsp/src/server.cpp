@@ -104,35 +104,20 @@ Loc convert_loc(const lsp::TextDocumentIdentifier& file, const lsp::Range& pos) 
 
 
 struct InitOptions {
-    std::filesystem::path workspace_root;
-    std::filesystem::path workspace_config_path;
-    std::filesystem::path global_config_path;
-    bool restart_from_crash;
+    bool restart_from_crash = false;
 };
 
 InitOptions parse_initialize_options(const reqst::Initialize::Params& params, Server& server) {
-    if (params.rootUri.isNull())
-        throw lsp::RequestError(lsp::Error::InvalidParams, "No root URI provided in initialize request");
-
     InitOptions data;
-    data.workspace_root = std::string(params.rootUri.value().path());
 
     if (auto init = params.initializationOptions; init.has_value() && init->isObject()) {
         const auto& obj = init->object();
-        if (auto it = obj.find("workspaceConfig"); it != obj.end() && it->second.isString())
-            data.workspace_config_path = it->second.string();
-
-        if (auto it = obj.find("globalConfig"); it != obj.end() && it->second.isString())
-            data.global_config_path = it->second.string();
         
         if (auto it = obj.find("restartFromCrash"); it != obj.end() && it->second.isBoolean())
             data.restart_from_crash = it->second.boolean();
-    } else {
-        server.send_message("No initialization options provided in initialize request", lsp::MessageType::Error);
     }
-
-    if(data.workspace_config_path.empty()) server.send_message("No local artic.json workspace config", lsp::MessageType::Warning);
-    if(data.global_config_path.empty())    server.send_message("No global artic.json config", lsp::MessageType::Warning); 
+    // server.send_message("No initialization options provided in initialize request", lsp::MessageType::Error);
+    // workspace_root = std::string(params.rootUri.value().path());
     return data;
 }
 
@@ -143,12 +128,8 @@ void Server::setup_events_initialization() {
         
         InitOptions init_data = parse_initialize_options(params, *this);
 
-        log::info("Workspace root: {}", init_data.workspace_root);
-        log::info("Workspace config path: {}", init_data.workspace_config_path);
-        log::info("Global config path: {}", init_data.global_config_path);
-
         safe_mode_ = init_data.restart_from_crash;
-        workspace_ = std::make_unique<workspace::Workspace>(init_data.workspace_root);
+        workspace_ = std::make_unique<workspace::Workspace>();
         
         return reqst::Initialize::Result {
             .capabilities = lsp::ServerCapabilities{

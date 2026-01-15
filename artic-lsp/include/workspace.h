@@ -75,10 +75,8 @@ struct ConfigFile {
 
 class Workspace {
 public:
-    fs::path workspace_root;
-
-    Workspace(const fs::path& workspace_root)
-        : workspace_root(workspace_root), arena_(std::make_unique<Arena>())
+    Workspace()
+        : arena_(std::make_unique<Arena>())
     {}
 
     void reload(config::ConfigLog& log);
