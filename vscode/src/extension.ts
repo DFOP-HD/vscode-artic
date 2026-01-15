@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { LanguageClient, LanguageClientOptions, ServerOptions, TransportKind, State } from 'vscode-languageclient/node';
+import { LanguageClient, LanguageClientOptions, ServerOptions, TransportKind, State, Trace } from 'vscode-languageclient/node';
 import { execSync } from 'child_process';
 import { existsSync, writeFileSync } from 'fs';
 
@@ -76,7 +76,8 @@ function startClient(context: vscode.ExtensionContext) {
                     vscode.workspace.createFileSystemWatcher('**/*.impala'),
                     vscode.workspace.createFileSystemWatcher('**/artic.json'),
                     vscode.workspace.createFileSystemWatcher('**/.artic-lsp'),
-                ]
+                ],
+                configurationSection: 'artic'
             },
             outputChannelName: 'Artic Language Server',
             traceOutputChannel: vscode.window.createOutputChannel('Artic Language Server Trace'),
@@ -98,7 +99,7 @@ function startClient(context: vscode.ExtensionContext) {
                 };
             },
             connectionOptions: {
-                maxRestartCount: 5,
+                maxRestartCount: 0,
             }
         };
 
@@ -128,7 +129,10 @@ function startClient(context: vscode.ExtensionContext) {
         });
 
         // Start the client (which also starts the server)
-        client.start();
+        client.start().then(() => {
+            // Set trace after client has started
+            client.setTrace(Trace.Verbose);
+        });
     } catch (error: any) {
         console.error('Failed to start Artic Language Server:', error);
         vscode.window.showErrorMessage(`Failed to start Artic Language Server: ${error.message}`);

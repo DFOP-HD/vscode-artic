@@ -31,13 +31,17 @@ add_library(artic-lsp
 # add_subdirectory(../artic artic EXCLUDE_FROM_ALL)
 target_include_directories(artic-lsp PUBLIC ../artic/include)
 
-target_compile_options(artic-lsp PRIVATE -Wno-deprecated-declarations)
+
 target_include_directories(artic-lsp PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>
 )
 
 add_subdirectory(../artic artic)
+
+target_compile_options(artic-lsp PRIVATE -Wno-deprecated-declarations)
+target_compile_options(artic PRIVATE -Wno-deprecated-declarations)
+target_compile_options(libartic PRIVATE -Wno-deprecated-declarations)
 
 target_link_libraries(artic-lsp PUBLIC
     libartic

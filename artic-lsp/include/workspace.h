@@ -85,7 +85,7 @@ public:
         if(auto f = tracked_file(file)) f->text = std::nullopt;
     }
     
-    void set_file_content(const std::filesystem::path& file, std::string&& content){
+    void set_file_content(const fs::path& file, std::string&& content){
         if(auto f = tracked_file(file)) f->text = std::move(content);
     }
 
@@ -164,6 +164,7 @@ private:
     }
 
     bool uses_file(const Project& project, const fs::path& file) const {
+        log::info("does {} use file {}?", project.name, file);
         for (const auto& f : project.files) {
             if (f == file) return true;
         }

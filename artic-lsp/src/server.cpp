@@ -18,6 +18,7 @@
 #include <lsp/jsonrpc/jsonrpc.h>
 
 #include <fstream>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <cctype>
@@ -50,6 +51,12 @@ int Server::run() {
             // std::this_thread::sleep_for(std::chrono::milliseconds(10));
         } catch (const lsp::RequestError& e) {
             log::info("LSP Message processing error: {}", e.what());
+        } catch (const std::runtime_error& e) {
+            log::info("LSP Server fatal runtime error: {}", e.what());
+            return 1;
+        } catch (const std::exception& e) {
+            log::info("LSP Server fatal exception: {}", e.what());
+            return 1;
         } catch (...) {
             log::info("LSP Server unknown fatal error");
             return 1;
