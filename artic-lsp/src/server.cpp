@@ -72,7 +72,7 @@ void Server::send_message(const std::string& message, lsp::MessageType type) {
 }
 
 Server::FileType Server::get_file_type(const std::filesystem::path& file) {
-    return file.extension() == ".json" ? FileType::ConfigFile : FileType::SourceFile;
+    return file.extension() == ".json" || file.extension() == ".artic-lsp" ? FileType::ConfigFile : FileType::SourceFile;
 }
 
 lsp::Location convert_loc(const Loc& loc){
@@ -419,7 +419,6 @@ void Server::setup_events_tokens() {
         // semantic tokens are not allowed to trigger recompile as this is called right after document changed
         bool already_compiled = compile && compile->locator.data(file);
         if(!already_compiled) return nullptr;
-        // ensure_compile(file);
         auto tokens = collect(compile->name_map, std::string(params.textDocument.uri.path()));
         
         log::info("[LSP] >>> Returning {} semantic tokens", tokens.data.size());
@@ -436,7 +435,6 @@ void Server::setup_events_tokens() {
         // semantic tokens are not allowed to trigger recompile as this is called right after document changed
         bool already_compiled = compile && compile->locator.data(file);
         if(!already_compiled) return nullptr;
-        // ensure_compile(file);
         auto tokens = collect(
             compile->name_map, std::string(params.textDocument.uri.path()), 
             params.range.start.line + 1, 
@@ -466,6 +464,7 @@ struct IndentifierOccurences{
 };
 
 std::optional<IndentifierOccurences> find_occurrences_of_identifier(Server& server, const Loc& cursor, bool include_declaration) {
+    if(Server::get_file_type(*cursor.file) != Server::FileType::SourceFile) return std::nullopt;
     server.ensure_compile(*cursor.file);
     auto& name_map = server.compile->name_map;
 
@@ -512,6 +511,7 @@ void Server::setup_events_definitions() {
 
         auto cursor = convert_loc(pos.textDocument, pos.position);
 
+        if(get_file_type(pos.textDocument.uri.path()) != FileType::SourceFile) return nullptr;
         ensure_compile(pos.textDocument.uri.path());
         auto& name_map = compile->name_map;
         
@@ -798,11 +798,8 @@ std::optional<lsp::CompletionItem> completion_item(const ast::NamedDecl& decl) {
 
 void Server::setup_events_completion() {
     message_handler_.add<reqst::TextDocument_Completion>([this](lsp::CompletionParams&& params) -> reqst::TextDocument_Completion::Result {
-        log::info("[LSP] <<< TextDocument Completion {}:{}:{}", 
-                 params.textDocument.uri.path(), 
-                 params.position.line + 1, 
-                 params.position.character + 1);
-
+        log::info("[LSP] <<< TextDocument Completion {}:{}:{}", params.textDocument.uri.path(), params.position.line + 1, params.position.character + 1);
+        if(get_file_type(params.textDocument.uri.path()) != FileType::SourceFile) return nullptr;
         ensure_compile(params.textDocument.uri.path());
         // params.position.character--;
         Loc cursor = convert_loc(params.textDocument, params.position);
@@ -1387,11 +1384,13 @@ void Server::setup_events_other() {
         Timer _("artic/debugAst");
         
         log::info("\n[LSP] <<< artic/debugAst {}:{}:{}", 
-                 params.textDocument.uri.path(), 
+        params.textDocument.uri.path(), 
                  params.position.line + 1, 
                  params.position.character + 1);
 
-        ensure_compile(params.textDocument.uri.path());
+        auto file = params.textDocument.uri.path();
+        if(get_file_type(file) != FileType::SourceFile) return nullptr;
+        ensure_compile(file);
         if (!compile || !compile->program) {
             throw lsp::RequestError(lsp::Error::InternalError, "No compilation result available");
         }
@@ -1444,7 +1443,6 @@ void Server::setup_events_other() {
         // inlay hints are not allowed to trigger recompile as this is called right after document changed
         bool already_compiled = compile && compile->locator.data(file);
         if(!already_compiled) return nullptr;
-        // ensure_compile(file);
 
         lsp::Array<lsp::InlayHint> hints;
         if(!compile->name_map.files.contains(file))

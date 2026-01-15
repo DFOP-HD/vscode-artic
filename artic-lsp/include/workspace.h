@@ -4,6 +4,7 @@
 #include "artic/arena.h"
 #include "artic/log.h"
 #include "lsp/types.h"
+#include <unordered_set>
 #include <vector>
 #include <string>
 #include <optional>

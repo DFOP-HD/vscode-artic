@@ -105,6 +105,62 @@ ConfigFile* Workspace::instantiate_config(const IncludeConfig& origin, config::C
         }
     }
 
+    // fix circular project dependencies
+    std::unordered_set<std::string> visited;
+    std::unordered_set<std::string> rec_stack;
+    
+    std::function<bool(const std::string&, const std::string&)> detect_cycle = 
+        [&](const std::string& project_name, const std::string& parent) -> bool {
+        
+        if (!projects_.contains(project_name)) {
+            return false; // dependency doesn't exist, will be handled elsewhere
+        }
+        
+        if (rec_stack.count(project_name)) {
+            // Cycle detected!
+            auto& parent_project = projects_.at(parent);
+
+            log.file_context = parent_project->origin;
+            log.error("Circular dependency detected: " + parent + " -> " + project_name + 
+                     " creates a cycle. Removing this dependency.", project_name);
+            log::info("Circular dependency detected in config '{}': {} -> {}", parent_project->origin.string(), parent, project_name);
+            
+            // Remove the dependency that creates the cycle
+            auto& deps = parent_project->dependencies;
+            deps.erase(std::remove(deps.begin(), deps.end(), project_name), deps.end());
+            
+            return true;
+        }
+        
+        if (visited.count(project_name)) {
+            return false; // already processed
+        }
+        
+        visited.insert(project_name);
+        rec_stack.insert(project_name);
+        
+        // Check all dependencies
+        auto& proj = projects_.at(project_name);
+        for (const auto& dep : proj->dependencies) {
+            if (detect_cycle(dep, project_name)) {
+                // Cycle was detected and fixed in recursive call
+            }
+        }
+        
+        rec_stack.erase(project_name);
+        return false;
+    };
+    
+    // Check each project for cycles
+    for (auto& project : parser.projects) {
+        for (auto& dep : project.dependencies) {
+            log::info("Checking dependency {} -> {}", project.name, dep);
+            visited.clear();
+            rec_stack.clear();
+            detect_cycle(project.name, dep);
+        }
+    }
+
     // auto log_project_info = [&](const Project& dep, const fs::path& current_config){
     //     log.file_context = current_config;
     //     if(dep.origin != current_config)
