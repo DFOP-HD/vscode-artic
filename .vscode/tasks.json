@@ -37,7 +37,7 @@
         {
             "label": "Build Artic LSP Server",
             "type": "shell",
-            "command": "./build_lsp.sh",
+            "command": "./build-lsp.sh",
             "group": "build",
             "options": {
                 "cwd": "${workspaceFolder}"

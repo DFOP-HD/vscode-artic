@@ -160,7 +160,7 @@ vscode-artic
 | | artic.tmGrammar.json      // TextMate grammar for syntax highlighting
 | language-configuration.json // Brackets and indentation rules
 |
-| build_lsp.sh                // builds artic-lsp
+| build-lsp.sh                // builds artic-lsp
 | package.sh                  // builds artic-lsp and extension, packages the extension
 | publish.sh                  // builds and packages everything, publishes a new release (internal)
 |
