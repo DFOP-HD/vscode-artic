@@ -1,3 +1,3 @@
 [submodule "artic"]
 	path = artic
-	url = git@github.com:DFOP-HD/artic-lsp.git
+	url = ../artic-lsp.git
