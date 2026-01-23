@@ -184,6 +184,7 @@ git clone git@github.com:DFOP-HD/vscode-artic.git --recursive
 ```
 Note: if you forgot to clone recursively, you can run this after cloning
 ```bash
+git submodule init
 git submodule update --recursive
 ```
 
