@@ -1167,8 +1167,11 @@ void Server::setup_events_completion() {
 void Server::compile_this_and_related_files(const std::filesystem::path& file, std::string* new_content) {
     Timer _("Compile Files");
 
+    if(new_content) workspace_->set_file_content(file, std::move(*new_content));
+
     workspace::config::ConfigLog cfg_log;
     auto files = workspace_->collect_project_files(file, cfg_log);
+    publish_config_diagnostics(cfg_log);
     
     if (files.empty()) {
         log::info("No input files to compile");
@@ -1311,10 +1314,9 @@ void make_config_diagnostic(const workspace::config::ConfigLog::Message& msg,
 void Server::publish_config_diagnostics(const workspace::config::ConfigLog& log) {
     const bool print_to_console = true;
     if(print_to_console) {
-        log::info("Reloaded Workspace");
         log::info("--- Config Log ---");
         for (auto& e : log.messages) {
-            if(e.severity > lsp::DiagnosticSeverity::Warning) continue;
+            // if(e.severity > lsp::DiagnosticSeverity::Warning) continue;
             auto s = 
                 (e.severity == lsp::DiagnosticSeverity::Error)        ? "Error" :
                 (e.severity == lsp::DiagnosticSeverity::Warning)      ? "Warning" : 
@@ -1352,6 +1354,7 @@ void Server::reload_workspace(const std::string& active_file) {
     log::info("Reloading workspace configuration");
     workspace::config::ConfigLog log;
     workspace_->reload(log);
+    publish_config_diagnostics(log);
     
     // Recompile last compile
     if (compile) {

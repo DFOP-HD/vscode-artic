@@ -46,10 +46,10 @@ private:
 };
 
 struct ConfigParser {
-    ConfigParser(const IncludeConfig& origin, config::ConfigLog& log) 
+    ConfigParser(const ConfigPath& origin, config::ConfigLog& log) 
         : origin(origin), log(log)
     {}
-    IncludeConfig origin;
+    ConfigPath origin;
     config::ConfigLog& log;
 
     // out
@@ -87,6 +87,7 @@ private:
         }
         split();
         dfs(0, root);
+        make_canoncial();
     }
 
     fs::path root;
@@ -122,6 +123,12 @@ private:
     }
 
     void dfs(size_t idx,const fs::path& base);
+
+    void make_canoncial() {
+        for(auto& p : results) {
+            p = fs::weakly_canonical(p);
+        }
+    }
 };
 
 

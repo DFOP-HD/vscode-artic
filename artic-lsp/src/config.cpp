@@ -96,7 +96,7 @@ bool ConfigParser::parse() {
                     log.warn("Deprecated: including a global configuration file with '<global>' is no longer supported", "<global>");
                     continue;
                 }
-                IncludeConfig include;
+                ConfigPath include;
                 include.raw_path_string = path;
                 if(path.ends_with('?')){
                     path = path.substr(0, path.size()-1);
@@ -143,6 +143,8 @@ std::optional<Project> ConfigParser::parse_project(const nlohmann::json& pj) {
     p.dependencies =  pj.value<std::vector<std::string>>("dependencies", {});
     p.origin = config.path;
     p.file_patterns = pj.value<std::vector<std::string>>("files", {});
+    auto files = evaluate_patterns(p);
+    p.files = std::vector<fs::path>(files.begin(), files.end());
     return p;
 }
 

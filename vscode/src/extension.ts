@@ -99,7 +99,7 @@ function startClient(context: vscode.ExtensionContext) {
                 };
             },
             connectionOptions: {
-                maxRestartCount: 0,
+                maxRestartCount: 11,
             }
         };
 

@@ -56,7 +56,7 @@ struct Project {
     int depth = 100;
 };
 
-struct IncludeConfig {
+struct ConfigPath {
     // path to another artic.json
     fs::path path;
 
@@ -70,7 +70,7 @@ struct ConfigFile {
     fs::path path;
     std::optional<Project::Identifier> default_project = std::nullopt;
     std::vector<Project::Identifier> projects;
-    std::vector<IncludeConfig>       includes;
+    std::vector<ConfigPath>       includes;
 };
 
 
@@ -106,7 +106,7 @@ public:
         return {tracked_file(file)};
     }
 private:
-    ConfigFile* instantiate_config(const IncludeConfig& origin, config::ConfigLog& log);
+    ConfigFile* instantiate_config(const ConfigPath& origin, config::ConfigLog& log);
 
     Project* discover_project_for_file(fs::path file, config::ConfigLog& log) {
         file = fs::weakly_canonical(file);
@@ -143,7 +143,7 @@ private:
             if (configs_.contains(path)) 
                 return configs_.at(path).get();
 
-            IncludeConfig origin{ .path = path };
+            ConfigPath origin{ .path = path };
             if (auto config = instantiate_config(origin, log)) {
                 configs_[path] = std::move(config);
                 return config;

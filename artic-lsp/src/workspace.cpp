@@ -66,7 +66,7 @@ void Workspace::reload(config::ConfigLog& log) {
     project_for_file_cache_.clear();
 }
 
-ConfigFile* Workspace::instantiate_config(const IncludeConfig& origin, config::ConfigLog& log) {
+ConfigFile* Workspace::instantiate_config(const ConfigPath& origin, config::ConfigLog& log) {
     if(configs_.contains(origin.path)) {
         return configs_.at(origin.path).get();
     }
@@ -75,6 +75,7 @@ ConfigFile* Workspace::instantiate_config(const IncludeConfig& origin, config::C
     bool success = parser.parse();
     if (!success) return nullptr;
 
+    log.file_context = origin.path;
     // track config
     configs_[origin.path] = arena_->make_ptr<ConfigFile>(parser.config);
     // track projects
@@ -90,6 +91,7 @@ ConfigFile* Workspace::instantiate_config(const IncludeConfig& origin, config::C
     // recurse included configs
     for (const auto& include : parser.config.includes) {
         if(fs::exists(include.path)){
+            log.file_context = origin.path;
             auto included_config = instantiate_config(include, log);
             if(!included_config) {
                 log.file_context = origin.path;
