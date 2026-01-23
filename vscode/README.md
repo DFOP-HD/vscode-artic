@@ -170,30 +170,27 @@ vscode-artic
 
 ## Build Requirements
 
-- Clang (compiler)
-- AnyDSL (specifically Thorin)
-  - Set the path to thorin in `artic-lsp/build.sh`
-  - Note: Not directly used by the language server, could be removed in the future, but that would require larger changes to artic
-  - For now if you plan on using the exported package on another machine, you should build thorin without LLVM support to avoid the dependency
-- nlohmann_json
+You need to have CMake, Ninja, and Clang installed
+> Note that gcc is currently unsupported as it isn't compatilble with `lsp-framework`
 
 ## Checkout the repository
 
-1. clone the repository
-2. run `git submodule update --recursive`
-
-## Build and Start Extension Development Host
-
-Open the project in vscode and press `F5`
-
-## Build artic-lsp
-
-Build the Artic compiler with LSP support:
-
+Clone the repository
 ```bash
-cd ./build-lsp.sh
+# clone recursively using https
+git clone https://github.com/DFOP-HD/vscode-artic.git --recursive
+# or ssh
+git clone git@github.com:DFOP-HD/vscode-artic.git --recursive
 ```
-or
+Note: if you forgot to clone recursively, you can run this after cloning
+```bash
+git submodule update --recursive
+```
+
+## Building
+
+Configure and build `artic-lsp` with
+
 ```bash
 cd artic-lsp && ./build.sh
 ```
@@ -211,3 +208,8 @@ If you also want to immediately install the extension, use:
 ```bash
 ./package.sh install
 ```
+
+### Build and start Extension Development Host
+
+The easiest way to get started developing is to open the project in VSCode and press `F5`.
+This will open a new VSCode window with the extension installed.
