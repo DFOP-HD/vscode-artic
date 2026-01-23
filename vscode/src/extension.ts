@@ -216,14 +216,14 @@ function startClient(context: vscode.ExtensionContext) {
             }
             if (event.oldState === State.Running && event.newState === State.Stopped) { // Running -> Starting
                 restartFromCrash = true;
-                vscode.window.showWarningMessage(
-                    `Artic Language Server has crashed. Restarting in safe mode...`,
-                    'Show Output'
-                ).then(choice => {
-                    if (choice === 'Show Output') {
-                        client.outputChannel?.show();
-                    }
-                });
+                // vscode.window.showWarningMessage(
+                //     `Artic Language Server has crashed. Restarting in safe mode...`,
+                //     'Show Output'
+                // ).then(choice => {
+                //     if (choice === 'Show Output') {
+                //         client.outputChannel?.show();
+                //     }
+                // });
             }
         });
 
