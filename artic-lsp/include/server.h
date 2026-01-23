@@ -42,7 +42,7 @@ public:
 
     void send_message(const std::string& message, lsp::MessageType type);
     void compile_files(std::span<const workspace::File*> files);
-    void compile_file(const std::filesystem::path& file, std::string* new_content = nullptr);
+    void compile_this_and_related_files(const std::filesystem::path& file, std::string* new_content = nullptr);
     void ensure_compile(std::string_view file_view);
 
     enum class FileType { SourceFile, ConfigFile };

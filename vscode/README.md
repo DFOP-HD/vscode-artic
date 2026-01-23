@@ -160,7 +160,7 @@ vscode-artic
 | | artic.tmGrammar.json      // TextMate grammar for syntax highlighting
 | language-configuration.json // Brackets and indentation rules
 |
-| build_lsp.sh                // builds artic-lsp
+| build-lsp.sh                // builds artic-lsp
 | package.sh                  // builds artic-lsp and extension, packages the extension
 | publish.sh                  // builds and packages everything, publishes a new release (internal)
 |
@@ -191,7 +191,7 @@ Open the project in vscode and press `F5`
 Build the Artic compiler with LSP support:
 
 ```bash
-cd ./build_lsp.sh
+cd ./build-lsp.sh
 ```
 or
 ```bash

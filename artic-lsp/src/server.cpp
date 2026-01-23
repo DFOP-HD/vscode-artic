@@ -18,6 +18,7 @@
 #include <lsp/jsonrpc/jsonrpc.h>
 
 #include <fstream>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <cctype>
@@ -50,6 +51,12 @@ int Server::run() {
             // std::this_thread::sleep_for(std::chrono::milliseconds(10));
         } catch (const lsp::RequestError& e) {
             log::info("LSP Message processing error: {}", e.what());
+        } catch (const std::runtime_error& e) {
+            log::info("LSP Server fatal runtime error: {}", e.what());
+            return 1;
+        } catch (const std::exception& e) {
+            log::info("LSP Server fatal exception: {}", e.what());
+            return 1;
         } catch (...) {
             log::info("LSP Server unknown fatal error");
             return 1;
@@ -65,7 +72,7 @@ void Server::send_message(const std::string& message, lsp::MessageType type) {
 }
 
 Server::FileType Server::get_file_type(const std::filesystem::path& file) {
-    return file.extension() == ".json" ? FileType::ConfigFile : FileType::SourceFile;
+    return file.extension() == ".json" || file.extension() == ".artic-lsp" ? FileType::ConfigFile : FileType::SourceFile;
 }
 
 lsp::Location convert_loc(const Loc& loc){
@@ -104,35 +111,20 @@ Loc convert_loc(const lsp::TextDocumentIdentifier& file, const lsp::Range& pos) 
 
 
 struct InitOptions {
-    std::filesystem::path workspace_root;
-    std::filesystem::path workspace_config_path;
-    std::filesystem::path global_config_path;
-    bool restart_from_crash;
+    bool restart_from_crash = false;
 };
 
 InitOptions parse_initialize_options(const reqst::Initialize::Params& params, Server& server) {
-    if (params.rootUri.isNull())
-        throw lsp::RequestError(lsp::Error::InvalidParams, "No root URI provided in initialize request");
-
     InitOptions data;
-    data.workspace_root = std::string(params.rootUri.value().path());
 
     if (auto init = params.initializationOptions; init.has_value() && init->isObject()) {
         const auto& obj = init->object();
-        if (auto it = obj.find("workspaceConfig"); it != obj.end() && it->second.isString())
-            data.workspace_config_path = it->second.string();
-
-        if (auto it = obj.find("globalConfig"); it != obj.end() && it->second.isString())
-            data.global_config_path = it->second.string();
         
         if (auto it = obj.find("restartFromCrash"); it != obj.end() && it->second.isBoolean())
             data.restart_from_crash = it->second.boolean();
-    } else {
-        server.send_message("No initialization options provided in initialize request", lsp::MessageType::Error);
     }
-
-    if(data.workspace_config_path.empty()) server.send_message("No local artic.json workspace config", lsp::MessageType::Warning);
-    if(data.global_config_path.empty())    server.send_message("No global artic.json config", lsp::MessageType::Warning); 
+    // server.send_message("No initialization options provided in initialize request", lsp::MessageType::Error);
+    // workspace_root = std::string(params.rootUri.value().path());
     return data;
 }
 
@@ -143,16 +135,8 @@ void Server::setup_events_initialization() {
         
         InitOptions init_data = parse_initialize_options(params, *this);
 
-        log::info("Workspace root: {}", init_data.workspace_root);
-        log::info("Workspace config path: {}", init_data.workspace_config_path);
-        log::info("Global config path: {}", init_data.global_config_path);
-
         safe_mode_ = init_data.restart_from_crash;
-        workspace_ = std::make_unique<workspace::Workspace>(
-            init_data.workspace_root, 
-            init_data.workspace_config_path, 
-            init_data.global_config_path
-        );
+        workspace_ = std::make_unique<workspace::Workspace>();
         
         return reqst::Initialize::Result {
             .capabilities = lsp::ServerCapabilities{
@@ -239,7 +223,7 @@ void Server::setup_events_modifications() {
             // and we don't want to invalidate the definition while looking it up
             bool already_compiled = compile && compile->locator.data(path);
             if(!already_compiled)
-                compile_file(path);
+                compile_this_and_related_files(path);
         }
     });
     message_handler_.add<notif::TextDocument_DidChange>([this](notif::TextDocument_DidChange::Params&& params) {
@@ -255,7 +239,7 @@ void Server::setup_events_modifications() {
         // workspace_->mark_file_dirty(file);
 
         auto& content = std::get<lsp::TextDocumentContentChangeEvent_Text>(params.contentChanges[0]).text;
-        compile_file(file, &content);
+        compile_this_and_related_files(file, &content);
     });
 
     message_handler_.add<notif::TextDocument_DidSave>([this](notif::TextDocument_DidSave::Params&& params) {
@@ -435,7 +419,6 @@ void Server::setup_events_tokens() {
         // semantic tokens are not allowed to trigger recompile as this is called right after document changed
         bool already_compiled = compile && compile->locator.data(file);
         if(!already_compiled) return nullptr;
-        // ensure_compile(file);
         auto tokens = collect(compile->name_map, std::string(params.textDocument.uri.path()));
         
         log::info("[LSP] >>> Returning {} semantic tokens", tokens.data.size());
@@ -452,7 +435,6 @@ void Server::setup_events_tokens() {
         // semantic tokens are not allowed to trigger recompile as this is called right after document changed
         bool already_compiled = compile && compile->locator.data(file);
         if(!already_compiled) return nullptr;
-        // ensure_compile(file);
         auto tokens = collect(
             compile->name_map, std::string(params.textDocument.uri.path()), 
             params.range.start.line + 1, 
@@ -482,6 +464,7 @@ struct IndentifierOccurences{
 };
 
 std::optional<IndentifierOccurences> find_occurrences_of_identifier(Server& server, const Loc& cursor, bool include_declaration) {
+    if(Server::get_file_type(*cursor.file) != Server::FileType::SourceFile) return std::nullopt;
     server.ensure_compile(*cursor.file);
     auto& name_map = server.compile->name_map;
 
@@ -528,6 +511,7 @@ void Server::setup_events_definitions() {
 
         auto cursor = convert_loc(pos.textDocument, pos.position);
 
+        if(get_file_type(pos.textDocument.uri.path()) != FileType::SourceFile) return nullptr;
         ensure_compile(pos.textDocument.uri.path());
         auto& name_map = compile->name_map;
         
@@ -814,11 +798,8 @@ std::optional<lsp::CompletionItem> completion_item(const ast::NamedDecl& decl) {
 
 void Server::setup_events_completion() {
     message_handler_.add<reqst::TextDocument_Completion>([this](lsp::CompletionParams&& params) -> reqst::TextDocument_Completion::Result {
-        log::info("[LSP] <<< TextDocument Completion {}:{}:{}", 
-                 params.textDocument.uri.path(), 
-                 params.position.line + 1, 
-                 params.position.character + 1);
-
+        log::info("[LSP] <<< TextDocument Completion {}:{}:{}", params.textDocument.uri.path(), params.position.line + 1, params.position.character + 1);
+        if(get_file_type(params.textDocument.uri.path()) != FileType::SourceFile) return nullptr;
         ensure_compile(params.textDocument.uri.path());
         // params.position.character--;
         Loc cursor = convert_loc(params.textDocument, params.position);
@@ -1183,55 +1164,30 @@ void Server::setup_events_completion() {
 //
 // -----------------------------------------------------------------------------
 
-void Server::compile_file(const std::filesystem::path& file, std::string* new_content) {
+void Server::compile_this_and_related_files(const std::filesystem::path& file, std::string* new_content) {
     Timer _("Compile Files");
 
+    if(new_content) workspace_->set_file_content(file, std::move(*new_content));
 
-    std::vector<const workspace::File*> files;
-    compile.emplace();
-    compile->active_file = file;
-
-    if (auto proj = workspace_->project_for_file(file)) {
-        if (new_content) 
-            workspace_->set_file_content(file, std::move(*new_content));
-
-        // known project    
-        log::info("Compiling file {} (project '{}')", file, proj.value()->name);
-
-        files = proj.value()->collect_files();
-    } else {
-        // default project
-        const auto& default_proj = workspace_->default_project();
-        
-        log::info("Compiling file {} (not in workspace -> using default project {})", file, default_proj->name);
-        
-        files = default_proj->collect_files();
-        auto temp_file = std::make_unique<workspace::File>(file);
-        if (new_content) {
-            temp_file->text = std::move(*new_content);
-        } else {
-            temp_file->read();
-        }
-        
-        files.push_back(temp_file.get());
-
-        // keep the temporary file alive for diagnostics
-        compile->temporary_files.push_back(std::move(temp_file));
-    }
+    workspace::config::ConfigLog cfg_log;
+    auto files = workspace_->collect_project_files(file, cfg_log);
+    publish_config_diagnostics(cfg_log);
     
     if (files.empty()) {
-        log::info("no input files (compile_files)");
+        log::info("No input files to compile");
         return;
     }
-
     log::info("Compiling {} file(s)", files.size());
 
+    // Initialize
+    compile.emplace();
     if(safe_mode_) {
         compile->exclude_non_parsed_files = true;
         log::info("Using safe mode");
     }
 
-    compile->compile_files(files);
+    // Compile
+    compile->compile_files(files, file);
 
     if(safe_mode_ && compile->parsed_all) {
         safe_mode_ = false;
@@ -1246,14 +1202,6 @@ void Server::compile_file(const std::filesystem::path& file, std::string* new_co
     } else {
         log::info("Compile failed");
     }
-
-    // log::Output out(std::clog, false);
-    // Printer p(out);
-    // p.print_additional_node_info = true;
-    // for(auto& [decl, _]: compile->name_map.files[file].references_of) {
-    //     if(decl->is_top_level)
-    //         decl->print(p);
-    // }
 
     auto convert_diagnostic = [](const Diagnostic& diag) -> lsp::Diagnostic {
         lsp::Diagnostic lsp_diag;
@@ -1294,7 +1242,7 @@ void Server::ensure_compile(std::string_view file_view) {
         throw lsp::RequestError(lsp::Error::InvalidParams, "File is not an Artic source file");
     }
     bool already_compiled = compile && compile->locator.data(file);
-    if (!already_compiled) compile_file(file);
+    if (!already_compiled) compile_this_and_related_files(file);
     if (!compile) throw lsp::RequestError(lsp::Error::InternalError, "Did not get a compilation result");
 }
 
@@ -1363,17 +1311,12 @@ void make_config_diagnostic(const workspace::config::ConfigLog::Message& msg,
     if(display_count == 0) diags[file].push_back(diag);
 };
 
-void Server::reload_workspace(const std::string& active_file) {
-    Timer _("Reload Workspace");
-    log::info("Reloading workspace configuration");
-    workspace::config::ConfigLog log;
-    workspace_->reload(log);
+void Server::publish_config_diagnostics(const workspace::config::ConfigLog& log) {
     const bool print_to_console = true;
     if(print_to_console) {
-        log::info("Reloaded Workspace");
         log::info("--- Config Log ---");
         for (auto& e : log.messages) {
-            if(e.severity > lsp::DiagnosticSeverity::Warning) continue;
+            // if(e.severity > lsp::DiagnosticSeverity::Warning) continue;
             auto s = 
                 (e.severity == lsp::DiagnosticSeverity::Error)        ? "Error" :
                 (e.severity == lsp::DiagnosticSeverity::Warning)      ? "Warning" : 
@@ -1383,8 +1326,8 @@ void Server::reload_workspace(const std::string& active_file) {
 
             log::info("[{}] {}: {}", s, e.file, e.message);
         }
-        log::info("--- Config Log ---");
-        workspace_->projects_.print();
+        // log::info("--- Config Log ---");
+        // workspace_->projects_.print();
     }
 
     FileDiags fileDiags;
@@ -1393,11 +1336,6 @@ void Server::reload_workspace(const std::string& active_file) {
     for (const auto& e : log.messages) {
         // Diagnosics for the file itself
         make_config_diagnostic(e, std::nullopt, fileDiags);
-
-        // Propagate errors to the workspace config file
-        if(e.severity == lsp::DiagnosticSeverity::Error) {
-            make_config_diagnostic(e, workspace_->workspace_config_path, fileDiags);
-        }
     }
 
     // Send diagnostics
@@ -1409,10 +1347,18 @@ void Server::reload_workspace(const std::string& active_file) {
             }
         );
     }
+}
 
-    if(compile){
-        auto file = compile->active_file;
-        compile_file(file);
+void Server::reload_workspace(const std::string& active_file) {
+    Timer _("Reload Workspace");
+    log::info("Reloading workspace configuration");
+    workspace::config::ConfigLog log;
+    workspace_->reload(log);
+    publish_config_diagnostics(log);
+    
+    // Recompile last compile
+    if (compile) {
+        compile_this_and_related_files(compile->active_file);
     }
 }
 
@@ -1441,11 +1387,13 @@ void Server::setup_events_other() {
         Timer _("artic/debugAst");
         
         log::info("\n[LSP] <<< artic/debugAst {}:{}:{}", 
-                 params.textDocument.uri.path(), 
+        params.textDocument.uri.path(), 
                  params.position.line + 1, 
                  params.position.character + 1);
 
-        ensure_compile(params.textDocument.uri.path());
+        auto file = params.textDocument.uri.path();
+        if(get_file_type(file) != FileType::SourceFile) return nullptr;
+        ensure_compile(file);
         if (!compile || !compile->program) {
             throw lsp::RequestError(lsp::Error::InternalError, "No compilation result available");
         }
@@ -1498,7 +1446,6 @@ void Server::setup_events_other() {
         // inlay hints are not allowed to trigger recompile as this is called right after document changed
         bool already_compiled = compile && compile->locator.data(file);
         if(!already_compiled) return nullptr;
-        // ensure_compile(file);
 
         lsp::Array<lsp::InlayHint> hints;
         if(!compile->name_map.files.contains(file))

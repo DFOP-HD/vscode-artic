@@ -7,10 +7,13 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # set(CMAKE_CXX_COMPILER_ID "Clang")
 
-include(cmake/Dependencies.cmake)
+# Apply sanitizer flags globally before including dependencies
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=address")
+set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fsanitize=address")
+set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -fsanitize=address")
 
-# Export compile commands for clangd
-set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+include(cmake/Dependencies.cmake)
 
 add_library(artic-lsp
     include/compile.h
@@ -28,13 +31,17 @@ add_library(artic-lsp
 # add_subdirectory(../artic artic EXCLUDE_FROM_ALL)
 target_include_directories(artic-lsp PUBLIC ../artic/include)
 
-target_compile_options(artic-lsp PRIVATE -Wno-deprecated-declarations)
+
 target_include_directories(artic-lsp PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>
 )
 
 add_subdirectory(../artic artic)
+
+target_compile_options(artic-lsp PRIVATE -Wno-deprecated-declarations)
+target_compile_options(artic PRIVATE -Wno-deprecated-declarations)
+target_compile_options(libartic PRIVATE -Wno-deprecated-declarations)
 
 target_link_libraries(artic-lsp PUBLIC
     libartic

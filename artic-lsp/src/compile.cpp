@@ -42,9 +42,9 @@ struct MemBuf : public std::streambuf {
 
 namespace artic::ls {
 
-void Compiler::compile_files(std::span<const workspace::File*> files) {
+void Compiler::compile_files(std::span<workspace::File*> files, std::filesystem::path active_file) {
     program = arena.make_ptr<ast::ModDecl>();
-    constexpr bool include_non_parsed_files = true;
+    this->active_file = active_file;
 
     for (auto& file : files){
         file->read();

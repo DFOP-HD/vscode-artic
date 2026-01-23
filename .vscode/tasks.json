@@ -4,7 +4,7 @@
         {
             "label": "npm: compile",
             "type": "shell",
-            "command": "source ~/.nvm/nvm.sh && npm run compile",
+            "command": "source ~/.nvm/nvm.sh && cd ./vscode/ && npm run compile",
             "group": "build",
             "presentation": {
                 "reveal": "silent"
@@ -18,26 +18,9 @@
             }
         },
         {
-            "label": "npm: watch", 
-            "type": "shell",
-            "command": "source ~/.nvm/nvm.sh && npm run watch",
-            "group": "build",
-            "isBackground": true,
-            "presentation": {
-                "reveal": "never"
-            },
-            "problemMatcher": "$tsc-watch",
-            "options": {
-                "shell": {
-                    "executable": "/bin/bash",
-                    "args": ["-c"]
-                }
-            }
-        },
-        {
             "label": "Build Artic LSP Server",
             "type": "shell",
-            "command": "./build_lsp.sh",
+            "command": "./vscode/build-lsp.sh",
             "group": "build",
             "options": {
                 "cwd": "${workspaceFolder}"
