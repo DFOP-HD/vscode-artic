@@ -111,11 +111,13 @@ struct InitOptions {
 };
 
 InitOptions parse_initialize_options(const reqst::Initialize::Params& params, Server& server) {
-    if (params.rootUri.isNull())
-        throw lsp::RequestError(lsp::Error::InvalidParams, "No root URI provided in initialize request");
-
     InitOptions data;
-    data.workspace_root = std::string(params.rootUri.value().path());
+    
+    if (!params.rootUri.isNull()) {
+        data.workspace_root = std::string(params.rootUri.value().path());
+    } else {
+        data.workspace_root = std::filesystem::path("/");
+    }
 
     if (auto init = params.initializationOptions; init.has_value() && init->isObject()) {
         const auto& obj = init->object();
