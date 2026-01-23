@@ -170,8 +170,15 @@ vscode-artic
 
 ## Build Requirements
 
-You need to have CMake, Ninja, and Clang installed
-> Note that gcc is currently unsupported as it isn't compatilble with `lsp-framework`
+- CMake
+- Ninja¹ 
+- Clang²
+- Node.js >= 20 (installed with nvm)
+> ¹ You can also use another generator, but ninja is used by default in the setup script `build.sh`.
+
+> ² gcc is currently unsupported as it isn't compatilble with lsp-framework, other compilers were not tested.
+
+> As, this extension only supports x86_64 Linux, development has only be tested on this platform.
 
 ## Checkout the repository
 
