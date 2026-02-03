@@ -1306,37 +1306,43 @@ void Server::publish_config_diagnostics(const workspace::config::ConfigLog& log)
             }
             return ranges;
         };
-        if(false) {
+        std::vector<lsp::Range> occurrences;
+        std::string file = msg.file.string();
+        std::string literal = msg.context.value().literal;
 
-        } else {
+        if(propagate_to_file) {
+            file = *propagate_to_file;
+            literal = "include";
+        }
+
+        if(msg.context.has_value()) {
+            occurrences = find_in_file(file, literal);
+        }
+
+        // bool sendDiagnostic = occurrences.empty() || msg.severity != lsp::DiagnosticSeverity::Hint;
+        bool sendDiagnostic = true;
+        if(sendDiagnostic) {
             lsp::Diagnostic diag;
             diag.message = msg.message;
             diag.severity = msg.severity;
             diag.range = lsp::Range{ lsp::Position{0,0}, lsp::Position{0,0} };
             
-            auto file = msg.file;
-            if(propagate_to_file) {
-                if(propagate_to_file.value() == msg.file) return;
-                file = propagate_to_file.value();
-                diag.message = "[" + msg.file.string() + "] " + diag.message;
+            for(auto& occ : occurrences) {
+                lsp::Diagnostic pos_diag(diag);
+                pos_diag.range = occ;
+                fileDiags[msg.file].push_back(pos_diag);
             }
-        
-            int occurences = 0;
-            if(msg.context.has_value()) {
-                auto literal = msg.context.value().literal;
-                if(propagate_to_file) literal = "include";
-        
-                auto occurrences = find_in_file(file, literal);
-                for(auto& occ : occurrences) {
-                    lsp::Diagnostic pos_diag(diag);
-                    pos_diag.range = occ;
-                    fileDiags[file].push_back(pos_diag);
-                    occurences++;
-                }
-            }
-            if(occurences == 0) fileDiags[file].push_back(diag);
+            if(occurrences.empty()) fileDiags[msg.file].push_back(diag);
+        } else {
+            // lsp::InlayHint hint;
+            
+            // for(auto& occ : occurrences) {
+            //     lsp::InlayHint hint;
+            //     hint.label = msg.message;
+            //     hint.position = occ.start;
+            //     fileHints[msg.file].push_back(hint);
+            // }
         }
-        
     }
 
     // Send diagnostics
