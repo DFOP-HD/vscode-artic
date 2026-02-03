@@ -23,7 +23,7 @@
   ],
   "main": "./out/extension.js",
   "activationEvents": [
-    "workspaceContains:artic.json"
+    "onLanguage:json"
   ],
   "contributes": {
     "languages": [
@@ -61,11 +61,6 @@
       {
         "command": "artic.restart",
         "title": "Restart Artic Language Server",
-        "category": "Artic"
-      },
-      {
-        "command": "artic.reloadConfig",
-        "title": "Reload Artic Configuration",
         "category": "Artic"
       },
       {

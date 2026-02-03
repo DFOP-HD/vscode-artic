@@ -4,7 +4,7 @@ import { LanguageClient, LanguageClientOptions, ServerOptions, TransportKind, St
 import { execSync } from 'child_process';
 import { existsSync, writeFileSync } from 'fs';
 
-let client: LanguageClient;
+let client: LanguageClient | undefined = undefined;
 let expectedStop = false;
 
 const workspaceConfigTemplate = `{
@@ -117,21 +117,21 @@ function startClient(context: vscode.ExtensionContext) {
             }
             if (event.oldState === State.Running && event.newState === State.Stopped) { // Running -> Starting
                 restartFromCrash = true;
-                vscode.window.showWarningMessage(
-                    `Artic Language Server has crashed. Restarting in safe mode...`,
-                    'Show Output'
-                ).then(choice => {
-                    if (choice === 'Show Output') {
-                        client.outputChannel?.show();
-                    }
-                });
+                // vscode.window.showWarningMessage(
+                //     `Artic Language Server has crashed. Restarting in safe mode...`,
+                //     'Show Output'
+                // ).then(choice => {
+                //     if (choice === 'Show Output') {
+                //         client.outputChannel?.show();
+                //     }
+                // });
             }
         });
 
         // Start the client (which also starts the server)
         client.start().then(() => {
             // Set trace after client has started
-            client.setTrace(Trace.Verbose);
+            client?.setTrace(Trace.Verbose);
         });
     } catch (error: any) {
         console.error('Failed to start Artic Language Server:', error);
@@ -145,28 +145,12 @@ export function activate(context: vscode.ExtensionContext) {
     // Register commands
     const restartCommand = vscode.commands.registerCommand('artic.restart', async () => {
         if (client) {
-            if(client.isRunning()){
-                expectedStop = true;
-                await client.restart();
-            } else {
-                client.start();
-            }
-        } else {
-            startClient(context);
-        }
-        
+            await client.stop().catch(_ => {});
+            client = undefined;
+        } 
+        startClient(context);
     });
     context.subscriptions.push(restartCommand);
-
-    const reloadConfigCommand = vscode.commands.registerCommand('artic.reloadConfig', async () => {
-        try {
-            if (!client) return;
-            await client.sendNotification('workspace/didChangeConfiguration', { settings: {} });
-        } catch (e: any) {
-            vscode.window.showErrorMessage(`Failed to send reload: ${e.message}`);
-        }
-    });
-    context.subscriptions.push(reloadConfigCommand);
 
     const debugAstCommand = vscode.commands.registerCommand('artic.debugAst', async () => {
         try {

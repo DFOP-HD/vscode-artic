@@ -106,15 +106,18 @@ public:
         return {tracked_file(file)};
     }
 
-    void on_config_changed(const fs::path& config_path, config::ConfigLog& log) {
+    // return true if file was known before
+    bool on_config_changed(const fs::path& config_path, config::ConfigLog& log) {
         log::info("Configuration file changed: {}", config_path.string());
-        reload(log);
         ConfigPath p {
             .path = config_path,
             .raw_path_string = config_path.string(),
             .is_optional = false
         };
+        bool known = configs_.contains(config_path);
+        if(known) reload(log);
         instantiate_config(p, log);
+        return known;
     }
 
 private:

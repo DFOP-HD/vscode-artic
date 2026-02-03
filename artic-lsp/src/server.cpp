@@ -214,9 +214,9 @@ void Server::setup_events_modifications() {
     });
     message_handler_.add<notif::TextDocument_DidOpen>([this](notif::TextDocument_DidOpen::Params&& params) {
         log::info("\n[LSP] <<< TextDocument DidOpen");
+        auto path = std::string(params.textDocument.uri.path());
 
         if(get_file_type(params.textDocument.uri.path()) == FileType::SourceFile) {
-            auto path = std::string(params.textDocument.uri.path());
             
             // skip compilation on open when it was already compiled
             // we need to do this as go to definition shortly opens the text document in vscode 
@@ -224,6 +224,11 @@ void Server::setup_events_modifications() {
             bool already_compiled = compile && compile->locator.data(path);
             if(!already_compiled)
                 compile_this_and_related_files(path);
+        } else {
+            workspace::config::ConfigLog log{};
+            bool known = workspace_->on_config_changed(path, log);
+            if(known) compile.reset();
+            publish_config_diagnostics(log);
         }
     });
     message_handler_.add<notif::TextDocument_DidChange>([this](notif::TextDocument_DidChange::Params&& params) {
@@ -247,9 +252,9 @@ void Server::setup_events_modifications() {
         log::info("\n[LSP] <<< TextDocument DidSave");
         std::filesystem::path file = params.textDocument.uri.path();
         if(get_file_type(file) == FileType::ConfigFile) {
-            compile.reset();
             workspace::config::ConfigLog log{};
-            workspace_->on_config_changed(file, log);
+            bool known = workspace_->on_config_changed(file, log);
+            if(known) compile.reset();
             publish_config_diagnostics(log);
             return;
         }
