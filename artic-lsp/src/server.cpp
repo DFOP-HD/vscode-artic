@@ -116,12 +116,6 @@ struct InitOptions {
 
 InitOptions parse_initialize_options(const reqst::Initialize::Params& params, Server& server) {
     InitOptions data;
-    
-    if (!params.rootUri.isNull()) {
-        data.workspace_root = std::string(params.rootUri.value().path());
-    } else {
-        data.workspace_root = std::filesystem::path("/");
-    }
 
     if (auto init = params.initializationOptions; init.has_value() && init->isObject()) {
         const auto& obj = init->object();
@@ -1199,9 +1193,14 @@ void Server::compile_this_and_related_files(const std::filesystem::path& file, s
         compile->exclude_non_parsed_files = true;
         log::info("Using safe mode");
     }
-
-    // Compile
-    compile->compile_files(files, file);
+    try {
+        // Compile
+        compile->compile_files(files, file);
+    } catch(std::runtime_error e) {
+        log::info("Compilation failed with error: {}", e.what());
+        compile.reset();
+        return;
+    }
 
     if(safe_mode_ && compile->parsed_all) {
         safe_mode_ = false;
@@ -1257,7 +1256,7 @@ void Server::ensure_compile(std::string_view file_view) {
     }
     bool already_compiled = compile && compile->locator.data(file);
     if (!already_compiled) compile_this_and_related_files(file);
-    if (!compile) throw lsp::RequestError(lsp::Error::InternalError, "Did not get a compilation result");
+    if (!compile) throw lsp::RequestError(lsp::Error::ServerCancelled, "Did not get a compilation result");
 }
 
 
