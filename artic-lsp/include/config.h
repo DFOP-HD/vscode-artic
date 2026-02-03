@@ -2,60 +2,16 @@
 #define ARTIC_LS_CONFIG_H
 
 #include "workspace.h"
-#include "lsp/types.h"
-
+#include <nlohmann/json.hpp>
 #include <vector>
 #include <string>
 #include <optional>
+#include <unordered_set>
 #include <filesystem>
 
 namespace artic::ls::workspace::config {
 
-struct ProjectDefinition {
-    // Unique project name.
-    // May be referenced by other projects.
-    Project::Identifier name;
-
-    // Path to the project root directory.
-    // FilePatterns are relative to this path.
-    std::string root_dir;
     
-    // A pattern which can be used to include or exclude one or more files.
-    // Exclude patterns start with '!' character.
-    std::vector<std::string> file_patterns;
-
-    // Names of other projects that this project depends on.
-    // Projects will include all files from dependencies.
-    std::vector<Project::Identifier> dependencies;
-
-    // config where project was first defined
-    std::filesystem::path origin;
-
-    // -- internal parse info --
-    int depth = 100;
-    bool was_defined_in_global_config = false;
-};
-
-struct IncludeConfig {
-    // path to another artic.json
-    std::filesystem::path path;
-
-    // -- internal parse info --
-    std::string raw_path_string;
-    bool is_optional = false;
-    bool is_global = false;
-};
-
-struct ConfigDocument {
-    std::string version;
-    std::vector<ProjectDefinition>   projects;
-    std::optional<ProjectDefinition> default_project;
-    std::vector<IncludeConfig>       includes;
-    std::filesystem::path            path;
-    
-    static std::optional<ConfigDocument> parse(const IncludeConfig& config, ConfigLog& log);
-};
-
 struct ConfigLog {
     using Severity = lsp::DiagnosticSeverity;
     struct Context {
@@ -65,31 +21,116 @@ struct ConfigLog {
         std::string message;
         Severity severity;
 
-        std::filesystem::path file;
+        fs::path file;
         std::optional<Context> context;
     };
-    std::filesystem::path file_context;
+    fs::path file_context;
     std::vector<Message> messages;
 
-    void error(std::string msg, std::optional<std::string> context=std::nullopt) { messages.push_back(make_message(Severity::Error,       std::move(msg), context)); }
-    void warn (std::string msg, std::optional<std::string> context=std::nullopt) { messages.push_back(make_message(Severity::Warning,     std::move(msg), context)); }
-    void info (std::string msg, std::optional<std::string> context=std::nullopt) { messages.push_back(make_message(Severity::Information, std::move(msg), context)); }
+    void error(std::string msg, std::string context="") { messages.push_back(make_message(Severity::Error,       std::move(msg), context)); }
+    void warn (std::string msg, std::string context="") { messages.push_back(make_message(Severity::Warning,     std::move(msg), context)); }
+    void info (std::string msg, std::string context="") { messages.push_back(make_message(Severity::Information, std::move(msg), context)); }
 
 private:
     static std::string quote(std::string_view in) {
         return '\"' + std::string(in) + '\"';
     }
-    Message make_message(Severity s, std::string msg, std::optional<std::string> context) {
+    Message make_message(Severity s, std::string msg, std::string context) {
         return Message{
-            .message=std::move(msg),
-            .severity=s,
-            .file=file_context, 
-            .context= context 
-                ? std::make_optional(Context{quote(context.value())}) 
-                : std::nullopt
+            .message = std::move(msg),
+            .severity = s,
+            .file = file_context, 
+            .context = context.empty() ? std::nullopt : std::make_optional(Context{.literal=quote(context)})
         };
     }
 };
+
+struct ConfigParser {
+    ConfigParser(const ConfigPath& origin, config::ConfigLog& log) 
+        : origin(origin), log(log)
+    {}
+    ConfigPath origin;
+    config::ConfigLog& log;
+
+    // out
+    ConfigFile config{};
+    std::vector<Project> projects{};
+
+    bool parse();
+private:
+    std::optional<Project> parse_project(const nlohmann::json& pj);
+    std::unordered_set<fs::path> evaluate_patterns(Project& project);
+};
+
+
+// Find all files under root matching the given glob pattern.
+// The pattern is interpreted with '/' as the separator and can include
+// *, **, ? as described.
+struct FilePatternParser {
+    FilePatternParser(fs::path root, std::string pattern, config::ConfigLog& log)
+        : root(std::move(root)), pattern(std::move(pattern)), log(log)
+    {
+        expand();
+    }
+
+    static std::vector<fs::path> expand(const fs::path& root, const std::string& pattern, config::ConfigLog& log) {
+        return FilePatternParser(root, pattern, log).results;
+    }
+
+    std::vector<fs::path> results;
+private:
+    void expand() {
+        expand_home();
+        if (!fs::exists(root) || !fs::is_directory(root)) {
+            log.error("Folder does not exist: {}", root.string());
+            return;
+        }
+        split();
+        dfs(0, root);
+        make_canoncial();
+    }
+
+    fs::path root;
+    std::string pattern;
+    config::ConfigLog& log;
+
+    // State
+    std::vector<std::string> parts;
+    std::unordered_set<std::string> dedup;
+
+    bool is_wildcard(const std::string& s){ return s.find('*') != std::string::npos || s.find('?') != std::string::npos; };
+
+    void expand_home() {
+        if (pattern.starts_with("~/")) {
+            const char* home = std::getenv("HOME");
+            root = home ? home : fs::path("/");
+            pattern.erase(0, 2);
+        }
+        if(pattern[0] == '/') {
+            root = fs::path("/");
+            pattern.erase(0, 1);
+        }
+    }
+
+    void split() {
+        parts.reserve(8);
+        std::string cur; cur.reserve(pattern.size());
+        for(char c : pattern) {
+            if(c == '/') { parts.push_back(cur); cur.clear(); }
+            else cur.push_back(c);
+        }
+        parts.push_back(cur);
+    }
+
+    void dfs(size_t idx,const fs::path& base);
+
+    void make_canoncial() {
+        for(auto& p : results) {
+            p = fs::weakly_canonical(p);
+        }
+    }
+};
+
 
 } // namespace artic::ls::workspace::config
 

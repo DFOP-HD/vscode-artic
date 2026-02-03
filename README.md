@@ -161,6 +161,7 @@ vscode-artic
 | language-configuration.json // Brackets and indentation rules
 |
 | build-lsp.sh                // builds artic-lsp
+| build-lsp.sh                // builds artic-lsp
 | package.sh                  // builds artic-lsp and extension, packages the extension
 | publish.sh                  // builds and packages everything, publishes a new release (internal)
 |

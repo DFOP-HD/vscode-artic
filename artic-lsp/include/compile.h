@@ -8,7 +8,6 @@
 #include "artic/check.h"
 #include "artic/locator.h"
 #include "artic/log.h"
-#include <memory>
 #include <span>
 
 namespace artic::ls{
@@ -27,7 +26,7 @@ struct Compiler {
             name_binder.warn_on_shadowing = true;
     }
 
-    void compile_files(std::span<const workspace::File*> files);
+    void compile_files(std::span<workspace::File*> files, std::filesystem::path active_file);
 
     // Output -----
     NameMap name_map;
@@ -37,8 +36,7 @@ struct Compiler {
     
     // Input -----
     bool exclude_non_parsed_files = false;
-    std::vector<std::unique_ptr<workspace::File>> temporary_files; // used to keep temporary file alive after compilation
-    std::filesystem::path active_file; // used for recompilation when the configuration changes. Could be done in a cleaner way
+    std::filesystem::path active_file;
 
     // Compiler Internals
     Arena arena;

@@ -77,11 +77,7 @@ Example:
     // recursively include projects from other configuration files (paths do not support wildcards)
     "include": [
         "../anydsl/runtime/artic.json",       // here: defines project runtime
-        "../anydsl/artic-utils/artic.json",   // here: defines project artic-utils
-
-        // include projects from global config 'artic-global.json' (path specified in extension settings). 
-        // also active even when "<global>" is not explicitly specified
-        "<global>",                           
+        "../anydsl/artic-utils/artic.json",   // here: defines project artic-utils                          
 
         // mark include as optional with '?' postfix 
         // (useful as a fallback for projects assumed to be included by 'artic-global.json') 
@@ -101,39 +97,6 @@ Example:
     },
 }
 ```
-
-## Global Configuration File
-Create a global configuration file `artic-global.json` (e.g. in `HOME`) and specify the path to the file in the extension settings
-
-Example:
-
-```json
-{
-    "artic-config": "1.0",
-
-    // the global configuration file typically includes a default project definition
-    "default-project": {
-        "name": "default project",
-        "dependencies": [
-            "runtime"
-        ],
-        "files": []
-    },
-
-    // defined projects are globally available
-    "projects": [],
-
-    // included projects are globally available
-    "include": [
-        "repos/anydsl/runtime/artic.json" // here: defines project 'runtime'
-    ]
-}
-```
-
-## Hints
-The language server will also provide information and diagnostics for your configuration files.
-
-Example:
 
 
 

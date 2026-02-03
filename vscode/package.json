@@ -23,7 +23,7 @@
   ],
   "main": "./out/extension.js",
   "activationEvents": [
-    "workspaceContains:artic.json"
+    "onLanguage:json"
   ],
   "contributes": {
     "languages": [
@@ -64,11 +64,6 @@
         "category": "Artic"
       },
       {
-        "command": "artic.reloadConfig",
-        "title": "Reload Artic Configuration",
-        "category": "Artic"
-      },
-      {
         "command": "artic.debugAst",
         "title": "Debug: Show AST Node at Cursor",
         "category": "Artic"
@@ -92,11 +87,6 @@
           ],
           "default": "off",
           "description": "Traces the communication between VS Code and the Artic language server."
-        },
-        "artic.globalConfig": {
-          "type": "string",
-          "default": "",
-          "description": "Path to a global artic-global.json configuration file providing shared projects and defaults."
         }
       }
     }
