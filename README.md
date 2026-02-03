@@ -19,7 +19,7 @@ Note: The language server is currently in an alpha stage. Please report any tech
 
 ## Limitations
 
-- Only supports x86_64 Linux
+- Only supports x86_64 Linux (Experimental windows branch can be found [here](https://github.com/Tim1Blau/vscode-artic/tree/windows))
 - Does not support the legacy Impala syntax
 - Workspace configuration file must be in root workspace folder (TODO)
 

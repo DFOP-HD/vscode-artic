@@ -101,6 +101,4 @@ Example:
 
 
 
-
-
 ![config diagnostics](docs/media/config.png)
