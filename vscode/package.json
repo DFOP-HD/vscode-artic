@@ -1,7 +1,7 @@
 {
   "name": "artic-language-server",
   "displayName": "AnyDSL - Artic Language Server",
-  "description": "Language support for AnyDSL's Impala programming language",
+  "description": "Language support for AnyDSL's programming language",
   "version": "0.3.8",
   "publisher": "timgruen",
   "repository": {
@@ -116,7 +116,7 @@
     "language-configuration.json",
     "snippets/**",
     "build/bin/**",
-    "icon.svg",
+    "docs/**",
     "README.md",
     "LICENSE.md"
   ]

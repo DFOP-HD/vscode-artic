@@ -77,11 +77,7 @@ Example:
     // recursively include projects from other configuration files (paths do not support wildcards)
     "include": [
         "../anydsl/runtime/artic.json",       // here: defines project runtime
-        "../anydsl/artic-utils/artic.json",   // here: defines project artic-utils
-
-        // include projects from global config 'artic-global.json' (path specified in extension settings). 
-        // also active even when "<global>" is not explicitly specified
-        "<global>",                           
+        "../anydsl/artic-utils/artic.json",   // here: defines project artic-utils                          
 
         // mark include as optional with '?' postfix 
         // (useful as a fallback for projects assumed to be included by 'artic-global.json') 
@@ -102,112 +98,9 @@ Example:
 }
 ```
 
-## Global Configuration File
-Create a global configuration file `artic-global.json` (e.g. in `HOME`) and specify the path to the file in the extension settings
-
-Example:
-
-```json
-{
-    "artic-config": "1.0",
-
-    // the global configuration file typically includes a default project definition
-    "default-project": {
-        "name": "default project",
-        "dependencies": [
-            "runtime"
-        ],
-        "files": []
-    },
-
-    // defined projects are globally available
-    "projects": [],
-
-    // included projects are globally available
-    "include": [
-        "repos/anydsl/runtime/artic.json" // here: defines project 'runtime'
-    ]
-}
-```
-
-## Hints
-The language server will also provide information and diagnostics for your configuration files.
-
-Example:
-
 
 
 
 
 
 ![config diagnostics](docs/media/config.png)
-
-
-
-
-
-
-# Development
-
-## Repository
-
-```js
-vscode-artic
-| artic-lsp                   // Language server - fork of Artic (c++)
-| src
-| | extension.ts              // Language client (vscode)
-| syntaxes
-| | artic.tmGrammar.json      // TextMate grammar for syntax highlighting
-| language-configuration.json // Brackets and indentation rules
-|
-| build-lsp.sh                // builds artic-lsp
-| package.sh                  // builds artic-lsp and extension, packages the extension
-| publish.sh                  // builds and packages everything, publishes a new release (internal)
-|
-| LICENSE.md
-| README.md
-```
-
-## Build Requirements
-
-- Clang (compiler)
-- AnyDSL (specifically Thorin)
-  - Set the path to thorin in `artic-lsp/build.sh`
-  - Note: Not directly used by the language server, could be removed in the future, but that would require larger changes to artic
-  - For now if you plan on using the exported package on another machine, you should build thorin without LLVM support to avoid the dependency
-- nlohmann_json
-
-## Checkout the repository
-
-1. clone the repository
-2. run `git submodule update --recursive`
-
-## Build and Start Extension Development Host
-
-Open the project in vscode and press `F5`
-
-## Build artic-lsp
-
-Build the Artic compiler with LSP support:
-
-```bash
-cd ./build-lsp.sh
-```
-or
-```bash
-cd artic-lsp && ./build.sh
-```
-
-### Build and Package the Extension
-
-To build Artic and package the VS Code extension as a `.vsix` file:
-
-```bash
-./package.sh
-```
-
-If you also want to immediately install the extension, use:
-
-```bash
-./package.sh install
-```

@@ -7,5 +7,3 @@ cd "$SCRIPT_DIR/../artic-lsp"
 ./build.sh
 mkdir -p "$SCRIPT_DIR/build/bin"
 cp -f "build/bin/artic" "$SCRIPT_DIR/build/bin/artic"
-
-w

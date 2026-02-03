@@ -32,7 +32,7 @@ function(fetch_thorin)
     # )
     FetchContent_Declare(
         thorin
-        GIT_REPOSITORY git@github.com:TimGrun/thorin.git
+        GIT_REPOSITORY https://github.com/TimGrun/thorin.git
         GIT_TAG ae4b94570e6fa5f564d02eb7ebecd6be6fd64ee8 # 3.12.0
     )
     FetchContent_MakeAvailable(thorin)
