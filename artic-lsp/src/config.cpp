@@ -44,7 +44,7 @@ bool ConfigParser::parse() {
         if (!j.contains("artic-config")) {
             log.error(
                 "Missing artic-config header\n"
-                "Example: \"artic-config\": \"1.0\""
+                "Example: \"artic-config\": \"2.0\""
             );
             return false;
         }

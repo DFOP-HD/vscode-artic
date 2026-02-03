@@ -232,6 +232,7 @@ void Server::setup_events_modifications() {
         log::info("[LSP] <<< TextDocument DidChange");
         std::filesystem::path file = params.textDocument.uri.path();
         if(get_file_type(file) == FileType::ConfigFile) {
+            // handled in didsave
             return;
         }
         // Clear the last compilation result to invalidate stale inlay hints
@@ -247,7 +248,9 @@ void Server::setup_events_modifications() {
         std::filesystem::path file = params.textDocument.uri.path();
         if(get_file_type(file) == FileType::ConfigFile) {
             compile.reset();
-            reload_workspace();
+            workspace::config::ConfigLog log{};
+            workspace_->on_config_changed(file, log);
+            publish_config_diagnostics(log);
             return;
         }
     });
@@ -1256,61 +1259,6 @@ void Server::ensure_compile(std::string_view file_view) {
 // -----------------------------------------------------------------------------
 
 
-using FileDiags = std::unordered_map<std::filesystem::path, std::vector<lsp::Diagnostic>>;
-
-void make_config_diagnostic(const workspace::config::ConfigLog::Message& msg, 
-    std::optional<std::filesystem::path> propagate_to_file,
-    FileDiags& diags
-) {
-    auto find_in_file = [](std::filesystem::path const& file, std::string_view literal) -> std::vector<lsp::Range> {
-        std::vector<lsp::Range> ranges;
-        if(literal.empty()) return ranges;
-        std::ifstream ifs(file);
-        if (!ifs) return ranges;
-
-        std::string line;
-        lsp::uint line_number = 0;
-        while (std::getline(ifs, line)) {
-            size_t pos = line.find(literal);
-            while (pos != std::string::npos) {
-                ranges.push_back(lsp::Range{
-                    lsp::Position{line_number, static_cast<lsp::uint>(pos)},
-                    lsp::Position{line_number, static_cast<lsp::uint>(pos + literal.size())}
-                });
-                pos = line.find(literal, pos + 1);
-            }
-            line_number++;
-        }
-        return ranges;
-    };
-    lsp::Diagnostic diag;
-    diag.message = msg.message;
-    diag.severity = msg.severity;
-    diag.range = lsp::Range{ lsp::Position{0,0}, lsp::Position{0,0} };
-    
-    auto file = msg.file;
-    if(propagate_to_file) {
-        if(propagate_to_file.value() == msg.file) return;
-        file = propagate_to_file.value();
-        diag.message = "[" + msg.file.string() + "] " + diag.message;
-    }
-
-    int display_count = 0;
-    if(msg.context.has_value()) {
-        auto literal = msg.context.value().literal;
-        if(propagate_to_file) literal = "include";
-
-        auto occurrences = find_in_file(file, literal);
-        for(auto& occ : occurrences) {
-            lsp::Diagnostic pos_diag(diag);
-            pos_diag.range = occ;
-            diags[file].push_back(pos_diag);
-            display_count++;
-        }
-    }
-    if(display_count == 0) diags[file].push_back(diag);
-};
-
 void Server::publish_config_diagnostics(const workspace::config::ConfigLog& log) {
     const bool print_to_console = true;
     if(print_to_console) {
@@ -1330,12 +1278,65 @@ void Server::publish_config_diagnostics(const workspace::config::ConfigLog& log)
         // workspace_->projects_.print();
     }
 
-    FileDiags fileDiags;
+    std::unordered_map<std::filesystem::path, std::vector<lsp::Diagnostic>> fileDiags;
+    std::unordered_map<std::filesystem::path, std::vector<lsp::InlayHint>> fileHints;
 
     // create diagnostics
-    for (const auto& e : log.messages) {
+    for (const auto& msg : log.messages) {
+        std::optional<std::string> propagate_to_file;
         // Diagnosics for the file itself
-        make_config_diagnostic(e, std::nullopt, fileDiags);
+        auto find_in_file = [](std::filesystem::path const& file, std::string_view literal) -> std::vector<lsp::Range> {
+            std::vector<lsp::Range> ranges;
+            if(literal.empty()) return ranges;
+            std::ifstream ifs(file);
+            if (!ifs) return ranges;
+    
+            std::string line;
+            lsp::uint line_number = 0;
+            while (std::getline(ifs, line)) {
+                size_t pos = line.find(literal);
+                while (pos != std::string::npos) {
+                    ranges.push_back(lsp::Range{
+                        lsp::Position{line_number, static_cast<lsp::uint>(pos)},
+                        lsp::Position{line_number, static_cast<lsp::uint>(pos + literal.size())}
+                    });
+                    pos = line.find(literal, pos + 1);
+                }
+                line_number++;
+            }
+            return ranges;
+        };
+        if(false) {
+
+        } else {
+            lsp::Diagnostic diag;
+            diag.message = msg.message;
+            diag.severity = msg.severity;
+            diag.range = lsp::Range{ lsp::Position{0,0}, lsp::Position{0,0} };
+            
+            auto file = msg.file;
+            if(propagate_to_file) {
+                if(propagate_to_file.value() == msg.file) return;
+                file = propagate_to_file.value();
+                diag.message = "[" + msg.file.string() + "] " + diag.message;
+            }
+        
+            int occurences = 0;
+            if(msg.context.has_value()) {
+                auto literal = msg.context.value().literal;
+                if(propagate_to_file) literal = "include";
+        
+                auto occurrences = find_in_file(file, literal);
+                for(auto& occ : occurrences) {
+                    lsp::Diagnostic pos_diag(diag);
+                    pos_diag.range = occ;
+                    fileDiags[file].push_back(pos_diag);
+                    occurences++;
+                }
+            }
+            if(occurences == 0) fileDiags[file].push_back(diag);
+        }
+        
     }
 
     // Send diagnostics

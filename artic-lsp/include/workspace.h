@@ -105,6 +105,18 @@ public:
         }
         return {tracked_file(file)};
     }
+
+    void on_config_changed(const fs::path& config_path, config::ConfigLog& log) {
+        log::info("Configuration file changed: {}", config_path.string());
+        reload(log);
+        ConfigPath p {
+            .path = config_path,
+            .raw_path_string = config_path.string(),
+            .is_optional = false
+        };
+        instantiate_config(p, log);
+    }
+
 private:
     ConfigFile* instantiate_config(const ConfigPath& origin, config::ConfigLog& log);
 
@@ -121,14 +133,18 @@ private:
     }
 
     Project* find_config_recursive(fs::path dir, const fs::path& file, config::ConfigLog& log) {
+        log::info("- Searching for config for file {}", file.string());
         while(dir != fs::path("/")) {
             if(auto config = find_config_in_dir(dir, file, log)) {
                 if(auto project = find_project_in_config_using_file(*config, file, log)) {
+                    log::info("- Found matching project '{}' in config {}", project->name, project->origin.string());
                     return project;
                 }
+                log::info("- Found config '{}', but does not contain a matching project, continuing...", config->path.string());
             }
             dir = dir.parent_path();
         }
+        log::info("- Did not find matching config for file {}", file.string());
         return nullptr;
     }
     
@@ -145,7 +161,6 @@ private:
 
             ConfigPath origin{ .path = path };
             if (auto config = instantiate_config(origin, log)) {
-                configs_[path] = std::move(config);
                 return config;
             }
         }
@@ -202,6 +217,7 @@ private:
     Project* try_get_project(const Project::Identifier& project_id) const {
         return projects_.contains(project_id) ? projects_.at(project_id).get() : nullptr;
     }
+
     
     std::unordered_map<fs::path, Ptr<Project>> project_for_file_cache_;
 

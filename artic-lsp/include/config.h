@@ -40,7 +40,7 @@ private:
             .message = std::move(msg),
             .severity = s,
             .file = file_context, 
-            .context = context.empty() ? std::make_optional(Context{.literal=quote(context)}) : std::nullopt
+            .context = context.empty() ? std::nullopt : std::make_optional(Context{.literal=quote(context)})
         };
     }
 };
