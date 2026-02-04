@@ -31,14 +31,14 @@ function findArticBinary(): string {
         return serverPath;
     }
 
-    const bundled = path.join(__dirname, '..', 'build', 'bin', 'artic');
+    const bundled = path.join(__dirname, '..', 'build', 'bin', 'artic-lsp');
     if (existsSync(bundled)) {
         return bundled;
     }
 
     try {
-        execSync('which artic', { stdio: 'ignore' });
-        return 'artic';
+        execSync('which artic-lsp', { stdio: 'ignore' });
+        return 'artic-lsp';
     } catch {
         // continue
     }

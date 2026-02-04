@@ -1270,7 +1270,7 @@ void Server::ensure_compile(std::string_view file_view) {
 
 
 void Server::publish_config_diagnostics(const workspace::config::ConfigLog& log) {
-    const bool print_to_console = true;
+    const bool print_to_console = false;
     if(print_to_console) {
         log::info("--- Config Log ---");
         for (auto& e : log.messages) {
