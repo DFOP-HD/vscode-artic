@@ -1,0 +1,410 @@
+// Runtime dependencies forward declared here so we can demo without the runtime
+#[import(cc = "builtin")] fn sizeof[_]() -> i64;
+#[import(cc = "builtin")] fn bitcast[T, U](_src: U) -> T;
+#[import(cc = "C", name = "anydsl_print_i16")]    fn print_i16(_: i16) -> ();
+#[import(cc = "C", name = "anydsl_print_i32")]    fn print_i32(_: i32) -> ();
+#[import(cc = "C", name = "anydsl_print_i64")]    fn print_i64(_: i64) -> ();
+#[import(cc = "C", name = "anydsl_print_u16")]    fn print_u16(_: u16) -> ();
+#[import(cc = "C", name = "anydsl_print_u32")]    fn print_u32(_: u32) -> ();
+#[import(cc = "C", name = "anydsl_print_u64")]    fn print_u64(_: u64) -> ();
+#[import(cc = "C", name = "anydsl_print_f32")]    fn print_f32(_: f32) -> ();
+#[import(cc = "C", name = "anydsl_print_f64")]    fn print_f64(_: f64) -> ();
+#[import(cc = "C", name = "anydsl_print_char")]   fn print_char(_: u8) -> ();
+#[import(cc = "C", name = "anydsl_print_string")] fn print_string(_: &[u8]) -> ();
+#[import(cc = "C", name = "anydsl_print_flush")]  fn print_flush() -> ();
+
+
+// range, range_step, unroll, unroll_step, etc.
+fn @unroll_step(body: fn(i32) -> ()) {
+    fn @(?beg & ?end & ?step) loop(beg: i32, end: i32, step: i32) -> () {
+        if beg < end {
+            @body(beg);
+            loop(beg + step, end, step)
+        }
+    }
+    loop
+}
+
+fn @range(body: fn(i32) -> ()) = @|lower: i32, upper: i32| unroll_step(body)($lower, $upper, 1);
+
+// Demo Print Library
+struct Printer[T] {
+    print: fn(T) -> ()
+}
+
+fn print_bool(b: bool) = print_string( if b { "true" } else { "false" } );
+fn print_byte(b: i8) {
+    let digits = "0123456789ABCDEF";
+    let hi = (b >> 4) & 0xF;
+    let lo = b & 0xF;
+    print_char(digits(hi));
+    print_char(digits(lo));
+}
+
+implicit = Printer[bool] { print = print_bool };
+implicit = Printer[i8]   { print = print_byte };
+// implicit = Printer[i8]   { print = |i| print_i16(i as i16) };
+implicit = Printer[u8]   { print = print_char };
+implicit = Printer[i16]  { print = print_i16 };
+implicit = Printer[u16]  { print = print_u16 };
+implicit = Printer[i32]  { print = print_i32 };
+implicit = Printer[u32]  { print = print_u32 };
+implicit = Printer[i64]  { print = print_i64 };
+implicit = Printer[u64]  { print = print_u64 };
+implicit = Printer[f32]  { print = print_f32 };
+implicit = Printer[f64]  { print = print_f64 };
+
+implicit = Printer[&[u8]]   { print = print_string };
+implicit = Printer[[u8*1]]  { print = print_string };
+implicit = Printer[[u8*2]]  { print = print_string };
+implicit = Printer[[u8*3]]  { print = print_string };
+implicit = Printer[[u8*4]]  { print = print_string };
+implicit = Printer[[u8*5]]  { print = print_string };
+implicit = Printer[[u8*6]]  { print = print_string };
+implicit = Printer[[u8*7]]  { print = print_string };
+implicit = Printer[[u8*8]]  { print = print_string };
+implicit = Printer[[u8*9]]  { print = print_string };
+implicit = Printer[[u8*10]] { print = print_string };
+implicit = Printer[[u8*11]] { print = print_string };
+implicit = Printer[[u8*12]] { print = print_string };
+implicit = Printer[[u8*13]] { print = print_string };
+implicit = Printer[[u8*14]] { print = print_string };
+implicit = Printer[[u8*15]] { print = print_string };
+implicit = Printer[[u8*16]] { print = print_string };
+implicit = Printer[[u8*17]] { print = print_string };
+implicit = Printer[[u8*18]] { print = print_string };
+implicit = Printer[[u8*19]] { print = print_string };
+implicit = Printer[[u8*20]] { print = print_string };
+implicit = Printer[[u8*21]] { print = print_string };
+implicit = Printer[[u8*22]] { print = print_string };
+implicit = Printer[[u8*23]] { print = print_string };
+implicit = Printer[[u8*24]] { print = print_string };
+implicit = Printer[[u8*25]] { print = print_string };
+implicit = Printer[[u8*26]] { print = print_string };
+implicit = Printer[[u8*27]] { print = print_string };
+implicit = Printer[[u8*28]] { print = print_string };
+implicit = Printer[[u8*29]] { print = print_string };
+implicit = Printer[[u8*30]] { print = print_string };
+
+// Usage:
+// for i in print_fmt(str) { /* print args */ }
+fn print_fmt(print_arg: fn(i32) -> ()) = |str: &[u8]| {
+    let mut i: u64 = 0;
+    let mut print_i = 0;
+    while str(i) != '\0' {
+        if str(i) == '{' && str(i+1) == '}' {
+            print_arg(print_i++);
+            i += 2;
+        } else {
+            print_char(str(i++));
+        }
+    }
+};
+
+
+
+fn print_bits_raw[T](obj: T) -> () {
+    let num_bytes = sizeof[T]() as i32;
+    let bits = bitcast[&[bool]](&obj);
+    for b in range(0, num_bytes*8) {
+        print_char(if bits(b) { '1' } else { '0' });
+        if b % 8 == 7 {
+            print_char(' ');
+        }
+    }
+}
+
+fn print_bits[T](obj: T) -> () {
+    let num_bytes = sizeof[T]() as i32;
+    let bytes = bitcast[&[i8]](&obj);
+    for b in range(0, num_bytes) {
+        let byte = bytes(num_bytes - 1 - b);
+
+        for bit in range(0, 8) {
+            let i = (7 - bit) as i8;
+            print_char(if byte & (1 << i) != 0 { '1' } else { '0' });
+        }
+        print_char(' ');
+    }
+}
+
+fn print_bytes[T](obj: T) -> () {
+    let num_bytes = sizeof[T]() as i32;
+    let bytes = bitcast[&[i8]](&obj);
+    for b in range(0, num_bytes) {
+        let byte = bytes(num_bytes - 1 - b);
+        print_byte(byte);
+        if b % 4 == 3 {
+            print_char(' ');
+        }
+    }
+}
+
+fn bitcompare[T](a: T, b:T) -> bool {
+    let num_bytes = sizeof[T]() as i32;
+    let bytes_a = bitcast[&[i8]](&a);
+    let bytes_b = bitcast[&[i8]](&b);
+    compare_bits(bytes_a, bytes_b, num_bytes)
+}
+
+fn compare_bits(a: &[i8], b:&[i8], num_bytes: i32) -> bool {
+    for by in range(0, num_bytes) {
+        let i = num_bytes - 1 - by;
+        // print4("byte[{}]: a={} b={} eq={}\n", by, a(i), b(i), a(i) == b(i));
+        print_byte(b(i));
+        if by % 4 == 3 {
+            print_char(' ');
+        }
+
+        if a(i) != b(i) {
+            return(false)
+        }
+    } 
+    true
+}
+
+// =======================================================
+// Print functions with varying number of arguments 1 - 10
+// =======================================================
+
+fn print[T](val: T, implicit p: Printer[T]) = p.print(val);
+
+fn print0(str: &[u8]) = print_string(str);
+
+fn print1[T1](
+    str: &[u8],
+    f1: T1, 
+    implicit p1: Printer[T1],
+) {
+    for i in print_fmt(str) {
+        match i {
+            0 => p1.print(f1),
+            _ => print_string("{}"),
+        };
+    }
+}
+fn print2[T1, T2](
+    str: &[u8],
+    f1: T1, f2: T2,
+    implicit p1: Printer[T1],
+    implicit p2: Printer[T2],     
+) {
+    for i in print_fmt(str) {
+        match i {
+            0 => p1.print(f1),
+            1 => p2.print(f2),
+            _ => print_string("{}"),
+        };
+    }
+}
+
+fn print3[T1, T2, T3](
+    str: &[u8],
+    f1: T1, f2: T2, f3: T3, 
+    implicit p1: Printer[T1],
+    implicit p2: Printer[T2],     
+    implicit p3: Printer[T3],     
+) {
+    for i in print_fmt(str) {
+        match i {
+            0 => p1.print(f1),
+            1 => p2.print(f2),
+            2 => p3.print(f3),
+            _ => print_string("{}"),
+        };
+    }
+}
+
+fn print4[T1, T2, T3, T4](
+    str: &[u8],
+    f1: T1, f2: T2, f3: T3, f4: T4, 
+    implicit p1: Printer[T1],
+    implicit p2: Printer[T2],     
+    implicit p3: Printer[T3],     
+    implicit p4: Printer[T4],     
+) {
+    for i in print_fmt(str) {
+        match i {
+            0 => p1.print(f1),
+            1 => p2.print(f2),
+            2 => p3.print(f3),
+            3 => p4.print(f4),
+            _ => print_string("{}"),
+        };
+    }
+}
+
+fn print5[T1, T2, T3, T4, T5](
+    str: &[u8],
+    f1: T1, f2: T2, f3: T3, f4: T4, f5: T5, 
+    implicit p1: Printer[T1],
+    implicit p2: Printer[T2],     
+    implicit p3: Printer[T3],     
+    implicit p4: Printer[T4],     
+    implicit p5: Printer[T5],     
+) {
+    for i in print_fmt(str) {
+        match i {
+            0 => p1.print(f1),
+            1 => p2.print(f2),
+            2 => p3.print(f3),
+            3 => p4.print(f4),
+            4 => p5.print(f5),
+            _ => print_string("{}"),
+        };
+    };
+}
+
+fn print6[T1, T2, T3, T4, T5, T6](
+    str: &[u8],
+    f1: T1, f2: T2, f3: T3, f4: T4, f5: T5, f6: T6, 
+    implicit p1: Printer[T1],
+    implicit p2: Printer[T2],     
+    implicit p3: Printer[T3],     
+    implicit p4: Printer[T4],     
+    implicit p5: Printer[T5],     
+    implicit p6: Printer[T6],     
+) {
+    for i in print_fmt(str) {
+        match i {
+            0 => p1.print(f1),
+            1 => p2.print(f2),
+            2 => p3.print(f3),
+            3 => p4.print(f4),
+            4 => p5.print(f5),
+            5 => p6.print(f6),
+            _ => print_string("{}"),
+        };
+    };
+}
+
+ fn print7[T1, T2, T3, T4, T5, T6, T7](
+    str: &[u8],
+    f1: T1, f2: T2, f3: T3, f4: T4, f5: T5, f6: T6, f7: T7, 
+    implicit p1: Printer[T1],
+    implicit p2: Printer[T2],     
+    implicit p3: Printer[T3],     
+    implicit p4: Printer[T4],     
+    implicit p5: Printer[T5],     
+    implicit p6: Printer[T6],     
+    implicit p7: Printer[T7],     
+) {
+    for i in print_fmt(str) {
+        match i {
+            0 => p1.print(f1),
+            1 => p2.print(f2),
+            2 => p3.print(f3),
+            3 => p4.print(f4),
+            4 => p5.print(f5),
+            5 => p6.print(f6),
+            6 => p7.print(f7),
+            _ => print_string("{}"),
+        };
+    };
+}
+
+fn print8[T1, T2, T3, T4, T5, T6, T7, T8](
+    str: &[u8],
+    f1: T1, f2: T2, f3: T3, f4: T4, f5: T5, f6: T6, f7: T7, f8: T8, 
+    implicit p1: Printer[T1],
+    implicit p2: Printer[T2],     
+    implicit p3: Printer[T3],     
+    implicit p4: Printer[T4],     
+    implicit p5: Printer[T5],     
+    implicit p6: Printer[T6],     
+    implicit p7: Printer[T7],     
+    implicit p8: Printer[T8],     
+) {
+    for i in print_fmt(str) {
+        match i {
+            0 => p1.print(f1),
+            1 => p2.print(f2),
+            2 => p3.print(f3),
+            3 => p4.print(f4),
+            4 => p5.print(f5),
+            5 => p6.print(f6),
+            6 => p7.print(f7),
+            7 => p8.print(f8),
+            _ => print_string("{}"),
+        };
+    };
+}
+
+fn print9[T1, T2, T3, T4, T5, T6, T7, T8, T9](
+    str: &[u8],
+    f1: T1, f2: T2, f3: T3, f4: T4, f5: T5, f6: T6, f7: T7, f8: T8, f9: T9, 
+    implicit p1: Printer[T1],
+    implicit p2: Printer[T2],     
+    implicit p3: Printer[T3],     
+    implicit p4: Printer[T4],     
+    implicit p5: Printer[T5],     
+    implicit p6: Printer[T6],     
+    implicit p7: Printer[T7],     
+    implicit p8: Printer[T8],     
+    implicit p9: Printer[T9],     
+) {
+    for i in print_fmt(str) {
+        match i {
+            0 => p1.print(f1),
+            1 => p2.print(f2),
+            2 => p3.print(f3),
+            3 => p4.print(f4),
+            4 => p5.print(f5),
+            5 => p6.print(f6),
+            6 => p7.print(f7),
+            7 => p8.print(f8),
+            8 => p9.print(f9),
+            _ => print_string("{}"),
+        };
+    };
+}
+
+fn print10[T1, T2, T3, T4, T5, T6, T7, T8, T9, T10](
+    str: &[u8],
+    f1: T1, f2: T2, f3: T3, f4: T4, f5: T5, f6: T6, f7: T7, f8: T8, f9: T9, f10: T10, 
+    implicit p1: Printer[T1],
+    implicit p2: Printer[T2],     
+    implicit p3: Printer[T3],     
+    implicit p4: Printer[T4],     
+    implicit p5: Printer[T5],     
+    implicit p6: Printer[T6],     
+    implicit p7: Printer[T7],     
+    implicit p8: Printer[T8],     
+    implicit p9: Printer[T9],     
+    implicit p10: Printer[T10],     
+) {
+    for i in print_fmt(str) {
+        match i {
+            0 => p1.print(f1),
+            1 => p2.print(f2),
+            2 => p3.print(f3),
+            3 => p4.print(f4),
+            4 => p5.print(f5),
+            5 => p6.print(f6),
+            6 => p7.print(f7),
+            7 => p8.print(f8),
+            8 => p9.print(f9),
+            9 => p10.print(f10),
+            _ => print_string("{}"),
+        };
+    };
+}
+
+
+fn print_test() -> i32 {
+    print[i32](42);
+    print_string("\n");
+
+    let addr = 42;
+    let oh_no = bitcast[&mut i32](&addr);
+    *oh_no = 43;
+
+    print1("oh no is {}\n", *oh_no);
+
+    implicit = Printer[u8] { print = |c| print_i16(c as i16) };
+
+    // generic functions with implicit Printers
+    print1("Hello World! The answer is {}.\n", 42);
+    print4("Hello {}! The answer is {}. {}{}\n", "World", 42, "nice", '!');
+    0
+}
