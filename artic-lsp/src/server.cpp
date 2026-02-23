@@ -696,34 +696,34 @@ lsp::CompletionItem completion_item(const ast::FnDecl* fn) {
     Printer p(ptrn);
     int arg = 1;
     ptrn << fn->id.name;
-    if(fn->type_params && !fn->type_params->params.empty()) {
-        ptrn << "[";
-        for(int i = 0; i < fn->type_params->params.size(); i++) {
-            if(i > 0) ptrn << ", ";
-            ptrn << "${" << arg++ << ":" ;
-            fn->type_params->params[i]->print(p);
-            ptrn << "}";
-        }
-        ptrn << "]";
-    }
-    if(fn->fn->param){
-        ptrn << "(";
-        if(fn->fn->param->is_tuple()){
-            auto tuple = fn->fn->param->isa<ast::TuplePtrn>();
-            for(int i = 0; i < tuple->args.size(); i++) {
-                if(i > 0) ptrn << ", ";
-                ptrn << "${" << arg++ << ":" ;
-                tuple->args[i]->print(p);
-                ptrn << "}";
-            }
-        } else {
-            ptrn << "${" << arg++ << ":" ;
-            fn->fn->param->print(p);
-            ptrn << "}";
-        }
-        ptrn << ")";
-    }
-    ptrn << "$0";
+    // if(fn->type_params && !fn->type_params->params.empty()) {
+    //     ptrn << "[";
+    //     for(int i = 0; i < fn->type_params->params.size(); i++) {
+    //         if(i > 0) ptrn << ", ";
+    //         ptrn << "${" << arg++ << ":" ;
+    //         fn->type_params->params[i]->print(p);
+    //         ptrn << "}";
+    //     }
+    //     ptrn << "]";
+    // }
+    // if(fn->fn->param){
+    //     ptrn << "(";
+    //     if(fn->fn->param->is_tuple()){
+    //         auto tuple = fn->fn->param->isa<ast::TuplePtrn>();
+    //         for(int i = 0; i < tuple->args.size(); i++) {
+    //             if(i > 0) ptrn << ", ";
+    //             ptrn << "${" << arg++ << ":" ;
+    //             tuple->args[i]->print(p);
+    //             ptrn << "}";
+    //         }
+    //     } else {
+    //         ptrn << "${" << arg++ << ":" ;
+    //         fn->fn->param->print(p);
+    //         ptrn << "}";
+    //     }
+    //     ptrn << ")";
+    // }
+    // ptrn << "$0";
     item.insertText = pt.str();
     return item;
 }
@@ -1473,7 +1473,7 @@ void Server::setup_events_other() {
             auto& loc = hint->loc;
             auto* type = hint->type;
             // Check if the hint location is within the requested range
-            if (!loc.file || *loc.file != file) {
+            if (!loc.file || *loc.file != file || !type || type->isa<TypeError>()) {
                 continue;
             }
 
@@ -1491,18 +1491,16 @@ void Server::setup_events_other() {
             }
 
             // Format the type name for display
-            std::string type_name = "<unknown>";
-            if (type) {
-                std::ostringstream oss;
-                log::Output output(oss, false);
-                Printer printer(output);
-                type->print(printer);
-                type_name = oss.str();
-            }
+            std::ostringstream oss;
+            log::Output output(oss, false);
+            Printer printer(output);
+
+            oss << ": ";
+            type->print(printer);
             
             lsp::InlayHint lsp_hint;
             lsp_hint.position = hint_pos;
-            lsp_hint.label = ": " + type_name;
+            lsp_hint.label = oss.str();
             lsp_hint.kind = lsp::InlayHintKindEnum(lsp::InlayHintKind::Type);
             lsp_hint.paddingLeft = false;
             lsp_hint.paddingRight = true;
