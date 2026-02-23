@@ -17,9 +17,6 @@ EXT_DIR="$ROOT_DIR"
 echo "==> Building Artic LSP server"
 "$ROOT_DIR/build-lsp.sh"
 
-echo "==> Auditing and fixing vulnerabilities"
-npm audit fix
-
 echo "==> Installing extension dependencies"
 pushd "$EXT_DIR" >/dev/null
 
