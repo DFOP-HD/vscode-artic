@@ -33,7 +33,7 @@ function(fetch_thorin)
     FetchContent_Declare(
         thorin
         GIT_REPOSITORY https://github.com/TimGrun/thorin.git
-        GIT_TAG ae4b94570e6fa5f564d02eb7ebecd6be6fd64ee8 # 3.12.0
+        GIT_TAG ae4b94570e6fa5f564d02eb7ebecd6be6fd64ee8
     )
     FetchContent_MakeAvailable(thorin)
 
@@ -51,7 +51,7 @@ fetch_thorin()
 FetchContent_Declare(
     lsp
     GIT_REPOSITORY https://github.com/leon-bckl/lsp-framework.git
-    GIT_TAG cf82b9ad4c89e3dc75fefb58352749dad45c5c0d # 1.3.0
+    GIT_TAG 1.3.1
 )
 FetchContent_MakeAvailable(lsp)
 

@@ -120,8 +120,8 @@ InitOptions parse_initialize_options(const reqst::Initialize::Params& params, Se
     if (auto init = params.initializationOptions; init.has_value() && init->isObject()) {
         const auto& obj = init->object();
         
-        if (auto it = obj.find("restartFromCrash"); it != obj.end() && it->second.isBoolean())
-            data.restart_from_crash = it->second.boolean();
+        if (auto val = obj.find("restartFromCrash"); val && val->isBoolean())
+            data.restart_from_crash = val->boolean();
     }
     // server.send_message("No initialization options provided in initialize request", lsp::MessageType::Error);
     // workspace_root = std::string(params.rootUri.value().path());

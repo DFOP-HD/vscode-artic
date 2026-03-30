@@ -8,15 +8,15 @@ set(BUILD_SHARED_LIBS OFF)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
-# set(CMAKE_CXX_COMPILER_ID "Clang")
 
-if (CMAKE_BUILD_TYPE STREQUAL "Debug")
-    # Apply sanitizer flags globally before including dependencies
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=address")
-    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fsanitize=address")
-    set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -fsanitize=address")    
+if(UNIX)
+    if (CMAKE_BUILD_TYPE STREQUAL "Debug")
+        # Apply sanitizer flags globally before including dependencies
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=address")
+        set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fsanitize=address")
+        set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -fsanitize=address")    
+    endif()
 endif()
-
 
 # thorin, lsp-framework, nlohmann_json
 include(cmake/Dependencies.cmake)

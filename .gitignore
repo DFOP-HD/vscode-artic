@@ -1,5 +1,6 @@
 out/
 node_modules/
 build/
+build-windows/
 artic-language-server-*.vsix
 .cache/
