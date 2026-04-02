@@ -69,7 +69,7 @@ ConfigFile* Workspace::instantiate_config(const ConfigPath& origin, config::Conf
     if(configs_.contains(origin.path)) {
         return configs_.at(origin.path).get();
     }
-    log::info("Instantiating config: {}", origin.path.string());
+    log::info("Instantiating config: {}", origin.path.generic_string());
     config::ConfigParser parser(origin, log);
     bool success = parser.parse();
     if (!success) return nullptr;
@@ -81,7 +81,7 @@ ConfigFile* Workspace::instantiate_config(const ConfigPath& origin, config::Conf
     for (const auto& project : parser.projects){
         if(projects_.contains(project.name)) {
             log.file_context = origin.path;
-            log.warn("ignoring duplicate definition of " + project.name + " in " + project.origin.string(), project.name);
+            log.warn("ignoring duplicate definition of " + project.name + " in " + project.origin.generic_string(), project.name);
             continue;
         }
         projects_[project.name] = arena_->make_ptr<Project>(project); // copy
@@ -94,14 +94,14 @@ ConfigFile* Workspace::instantiate_config(const ConfigPath& origin, config::Conf
             auto included_config = instantiate_config(include, log);
             if(!included_config) {
                 log.file_context = origin.path;
-                log.error("Failed to include config" + include.path.string(), include.raw_path_string);
+                log.error("Failed to include config" + include.path.generic_string(), include.raw_path_string);
             }
         } else {
             log.file_context = origin.path;
             if(include.is_optional) {
-                // log.info("Config file does not exist: \"" + include.path.string() + "\"", include.raw_path_string);
+                // log.info("Config file does not exist: \"" + include.path.generic_string() + "\"", include.raw_path_string);
             } else {
-                log.error("Config file does not exist: \"" + include.path.string() + "\"", include.raw_path_string);
+                log.error("Config file does not exist: \"" + include.path.generic_string() + "\"", include.raw_path_string);
             }
         }
     }
@@ -124,7 +124,7 @@ ConfigFile* Workspace::instantiate_config(const ConfigPath& origin, config::Conf
             log.file_context = parent_project->origin;
             log.error("Circular dependency detected: " + parent + " -> " + project_name + 
                      " creates a cycle. Removing this dependency.", project_name);
-            log::info("Circular dependency detected in config '{}': {} -> {}", parent_project->origin.string(), parent, project_name);
+            log::info("Circular dependency detected in config '{}': {} -> {}", parent_project->origin.generic_string(), parent, project_name);
             
             // Remove the dependency that creates the cycle
             auto& deps = parent_project->dependencies;
@@ -165,7 +165,7 @@ ConfigFile* Workspace::instantiate_config(const ConfigPath& origin, config::Conf
     // auto log_project_info = [&](const Project& dep, const fs::path& current_config){
     //     log.file_context = current_config;
     //     if(dep.origin != current_config)
-    //         log.info("Declared in config \"" + dep.origin.string() + "\"", dep.name);
+    //         log.info("Declared in config \"" + dep.origin.generic_string() + "\"", dep.name);
 
     //     auto files = dep.collect_files();
     //     std::ostringstream s;
@@ -175,7 +175,7 @@ ConfigFile* Workspace::instantiate_config(const ConfigPath& origin, config::Conf
     //     if(dep_files > 0) s << " + " << dep_files;
     //     s << " files: " << std::endl;
     //     for(const auto& file : files) {
-    //         s << "- " << "\"" << fs::weakly_canonical(file->path).string() << "\" " << std::endl;
+    //         s << "- " << "\"" << fs::weakly_canonical(file->path).generic_string() << "\" " << std::endl;
     //     }
     //     log.info(s.str(), dep.name);
 

@@ -27,6 +27,7 @@
 
 namespace reqst = lsp::requests;
 namespace notif = lsp::notifications;
+namespace fs = std::filesystem;
 
 namespace artic::ls {
 
@@ -71,7 +72,7 @@ void Server::send_message(const std::string& message, lsp::MessageType type) {
     message_handler_.sendNotification<notif::Window_ShowMessage>({ .type = type, .message = message });
 }
 
-Server::FileType Server::get_file_type(const std::filesystem::path& file) {
+Server::FileType Server::get_file_type(const fs::path& file) {
     return file.extension() == ".json" || file.extension() == ".artic-lsp" ? FileType::ConfigFile : FileType::SourceFile;
 }
 
@@ -88,14 +89,14 @@ lsp::Location convert_loc(const Loc& loc){
 
 Loc convert_loc(const lsp::TextDocumentIdentifier& file, const lsp::Position& pos) {
     return Loc(
-        std::make_shared<std::string>(file.uri.path()),
+        std::make_shared<std::string>(fs::path(file.uri.path()).generic_string()),
         Loc::Pos { .row = static_cast<int>(pos.line + 1), .col = static_cast<int>(pos.character + 1) }
     );
 }
 
 Loc convert_loc(const lsp::TextDocumentIdentifier& file, const lsp::Range& pos) {
     return Loc(
-        std::make_shared<std::string>(file.uri.path()),
+        std::make_shared<std::string>(fs::path(file.uri.path()).generic_string()),
         Loc::Pos { .row = static_cast<int>(pos.start.line + 1), .col = static_cast<int>(pos.start.character + 1) },
         Loc::Pos { .row = static_cast<int>(pos.end.line + 1),   .col = static_cast<int>(pos.end.character + 1) }
     );
@@ -1240,7 +1241,7 @@ void Server::compile_this_and_related_files(const std::filesystem::path& file, s
         diagnostics_by_file[*diag.loc.file].push_back(convert_diagnostic(diag));
     }
     for (const auto* file : files) {
-        auto path = file->path.string();
+        auto path = file->path.generic_string();
 
         message_handler_.sendNotification<notif::TextDocument_PublishDiagnostics>(
             notif::TextDocument_PublishDiagnostics::Params {
@@ -1252,11 +1253,11 @@ void Server::compile_this_and_related_files(const std::filesystem::path& file, s
 }
 
 void Server::ensure_compile(std::string_view file_view) {
-    std::string file(file_view);
-    if(get_file_type(file_view) != FileType::SourceFile) {
+    fs::path file(file_view);
+    if(get_file_type(file) != FileType::SourceFile) {
         throw lsp::RequestError(lsp::Error::InvalidParams, "File is not an Artic source file");
     }
-    bool already_compiled = compile && compile->locator.data(file);
+    bool already_compiled = compile && compile->locator.data(file.generic_string());
     if (!already_compiled) compile_this_and_related_files(file);
     if (!compile) throw lsp::RequestError(lsp::Error::ServerCancelled, "Did not get a compilation result");
 }
@@ -1319,7 +1320,7 @@ void Server::publish_config_diagnostics(const workspace::config::ConfigLog& log)
             return ranges;
         };
         std::vector<lsp::Range> occurrences;
-        std::string file = msg.file.string();
+        std::string file = msg.file.generic_string();
         std::string literal = msg.context.value().literal;
 
         if(propagate_to_file) {
@@ -1361,7 +1362,7 @@ void Server::publish_config_diagnostics(const workspace::config::ConfigLog& log)
     for(auto& [file, diags] : fileDiags) {
         message_handler_.sendNotification<notif::TextDocument_PublishDiagnostics>(
             notif::TextDocument_PublishDiagnostics::Params {
-                .uri = lsp::FileUri::fromPath(file.string()),
+                .uri = lsp::FileUri::fromPath(file.generic_string()),
                 .diagnostics = diags
             }
         );

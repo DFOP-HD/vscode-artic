@@ -136,19 +136,19 @@ private:
     }
 
     Project* find_config_recursive(fs::path dir, const fs::path& file, config::ConfigLog& log) {
-        log::info("- Searching for config for file {}", file.string());
+        log::info("- Searching for config for file {}", file.generic_string());
         do {
-            log::info("- Looking at dir {}", dir.string());
+            log::info("- Looking at dir {}", dir.generic_string());
             if(auto config = find_config_in_dir(dir, file, log)) {
                 if(auto project = find_project_in_config_using_file(*config, file, log)) {
-                    log::info("- Found matching project '{}' in config {}", project->name, project->origin.string());
+                    log::info("- Found matching project '{}' in config {}", project->name, project->origin.generic_string());
                     return project;
                 }
-                log::info("- Found config '{}', but does not contain a matching project, continuing...", config->path.string());
+                log::info("- Found config '{}', but does not contain a matching project, continuing...", config->path.generic_string());
             }
             dir = dir.parent_path();
         } while(dir.root_path() != dir);
-        log::info("- Did not find matching config for file {}", file.string());
+        log::info("- Did not find matching config for file {}", file.generic_string());
         return nullptr;
     }
     

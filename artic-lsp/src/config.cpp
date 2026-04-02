@@ -85,7 +85,7 @@ bool ConfigParser::parse() {
             return false;
         }
         if (!fs::exists(origin.path)) {
-            if(!origin.is_optional) log.error("Config file does not exist: \"" + origin.path.string() + "\"", origin.raw_path_string);
+            if(!origin.is_optional) log.error("Config file does not exist: \"" + origin.path.generic_string() + "\"", origin.raw_path_string);
             return false;
         }
         log.file_context = origin.path;
@@ -163,7 +163,7 @@ bool ConfigParser::parse() {
         }
         return true;
     } catch (const std::exception& e) {
-        log.error(std::string("Failed to parse json ") + origin.path.string() + ": " + e.what());
+        log.error(std::string("Failed to parse json ") + origin.path.generic_string() + ": " + e.what());
         return false;
     }
 }
@@ -189,7 +189,7 @@ std::optional<Project> ConfigParser::parse_project(const nlohmann::json& pj) {
         if(fs::exists(res) && fs::is_directory(res)) {
             p.root_dir = res;
         } else {
-            log.error("Project folder does not exist: " + res.string(), pj.value<std::string>("folder", ""));
+            log.error("Project folder does not exist: " + res.generic_string(), pj.value<std::string>("folder", ""));
             p.root_dir = root;
         }
     }
@@ -223,7 +223,7 @@ std::unordered_set<fs::path> ConfigParser::evaluate_patterns(Project& project) {
         std::ostringstream s;
         s << files.size() << " files:" << std::endl;
         for(const auto& file : files) {
-            s << "- " << fs::relative(file, root_dir).string() << " " << std::endl;
+            s << "- " << fs::relative(file, root_dir).generic_string() << " " << std::endl;
         }
         return s.str();
     };
@@ -272,8 +272,8 @@ void FilePatternParser::dfs(size_t idx,const fs::path& base){
     if(idx == parts.size()) {
         // End: if base is a regular file, record it.
         if(fs::is_regular_file(base)) {
-            auto norm = fs::weakly_canonical(base).string();
-            if(dedup.insert(norm).second) results.emplace_back(norm);
+            auto norm = fs::weakly_canonical(base);
+            if(dedup.insert(norm.generic_string()).second) results.emplace_back(norm);
         }
         return;
     }
@@ -304,7 +304,7 @@ void FilePatternParser::dfs(size_t idx,const fs::path& base){
         if(idx + 1 == parts.size()) {
             if(fs::is_regular_file(next)) {
                 auto norm = fs::weakly_canonical(next);
-                if(dedup.insert(norm.string()).second) results.emplace_back(norm);
+                if(dedup.insert(norm.generic_string()).second) results.emplace_back(norm);
             }
             return; // even if it is directory but pattern ended, we only collect files
         } else {
@@ -320,12 +320,12 @@ void FilePatternParser::dfs(size_t idx,const fs::path& base){
     for(auto it = fs::directory_iterator(base); it != fs::directory_iterator(); ++it) {
         if(++checked > 1'000) { log.warn("Stopped expanding wildcard: too many entries", part); break; }
         const auto& path = it->path();
-        std::string filename = path.filename().string();
+        std::string filename = path.filename().generic_string();
         if(fnmatch(part.c_str(), filename.c_str(), 0) == 0) {
             if(idx + 1 == parts.size()) {
                 if(it->is_regular_file()) {
                     auto norm = fs::weakly_canonical(path);
-                    if(dedup.insert(norm.string()).second) results.emplace_back(norm);
+                    if(dedup.insert(norm.generic_string()).second) results.emplace_back(norm);
                 }
             } else if(it->is_directory()) {
                 dfs(idx+1, path);

@@ -54,12 +54,12 @@ void Compiler::compile_files(std::span<workspace::File*> files, std::filesystem:
             continue;
         }
         if (log.locator)
-            log.locator->register_file(file->path.string(), file->text.value());
+            log.locator->register_file(file->path.generic_string(), file->text.value());
 
         MemBuf mem_buf(file->text.value());
         std::istream is(&mem_buf);
 
-        Lexer lexer(log, file->path.string(), is);
+        Lexer lexer(log, file->path.generic_string(), is);
         Parser parser(log, lexer, arena);
         parser.warns_as_errors = warns_as_errors;
         auto module = parser.parse();
