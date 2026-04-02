@@ -3,10 +3,64 @@
 #include "artic/log.h"
 #include <fstream>
 #include <filesystem>
-#include <fnmatch.h>
 #include <iostream>
 #include <optional>
 #include <vector>
+#if !defined(_WIN32)
+// fnmatch is a POSIX function not available on Windows/MSVC/MinGW by default.
+// Provide a minimal replacement that supports '*', '?' and simple character
+// classes like [abc] and ranges [a-z]. This is sufficient for the glob usage
+// in this file (matching filenames in a single directory component).
+#include <fnmatch.h>
+#else
+#include <regex>
+#include <cstring>
+// Minimal fnmatch replacement for Windows. Returns 0 on match, FNM_NOMATCH otherwise.
+#ifndef FNM_NOMATCH
+#define FNM_NOMATCH 1
+#endif
+static inline int fnmatch(const char* pattern, const char* str, int /*flags*/) {
+    std::string rx;
+    rx.reserve(strlen(pattern) * 2);
+
+    auto escape_char = [&](char c){
+        static const char* specials = ".^$+(){}|\\";
+        if(std::strchr(specials, c)) { rx.push_back('\\'); rx.push_back(c); }
+        else rx.push_back(c);
+    };
+
+    for(const char* p = pattern; *p; ++p) {
+        char c = *p;
+        if (c == '*') {
+            rx += ".*";
+        } else if (c == '?') {
+            rx += '.';
+        } else if (c == '[') {
+            // copy character class until closing ']' (very basic)
+            rx.push_back('[');
+            ++p;
+            if(*p == '!') { rx.push_back('^'); ++p; }
+            for(; *p && *p != ']'; ++p) {
+                // push as-is; escape backslash
+                if(*p == '\\') { rx += "\\\\"; }
+                else rx.push_back(*p);
+            }
+            rx.push_back(']');
+            if(*p == '\0') break;
+        } else {
+            escape_char(c);
+        }
+    }
+
+    try {
+        std::regex re(rx, std::regex::ECMAScript | std::regex::icase);
+        if (std::regex_match(str, re)) return 0;
+        return FNM_NOMATCH;
+    } catch (...) {
+        return FNM_NOMATCH;
+    }
+}
+#endif
 
 namespace artic::ls::workspace {
 
@@ -250,7 +304,7 @@ void FilePatternParser::dfs(size_t idx,const fs::path& base){
         if(idx + 1 == parts.size()) {
             if(fs::is_regular_file(next)) {
                 auto norm = fs::weakly_canonical(next);
-                if(dedup.insert(norm).second) results.emplace_back(norm);
+                if(dedup.insert(norm.string()).second) results.emplace_back(norm);
             }
             return; // even if it is directory but pattern ended, we only collect files
         } else {
@@ -271,7 +325,7 @@ void FilePatternParser::dfs(size_t idx,const fs::path& base){
             if(idx + 1 == parts.size()) {
                 if(it->is_regular_file()) {
                     auto norm = fs::weakly_canonical(path);
-                    if(dedup.insert(norm).second) results.emplace_back(norm);
+                    if(dedup.insert(norm.string()).second) results.emplace_back(norm);
                 }
             } else if(it->is_directory()) {
                 dfs(idx+1, path);

@@ -8,7 +8,6 @@
 #include <algorithm>
 #include <fstream>
 #include <filesystem>
-#include <fnmatch.h>
 #include <iostream>
 #include <memory>
 #include <optional>
@@ -20,7 +19,7 @@ namespace artic::ls::workspace {
 
 // File ----------------------------------------------------------------------
 
-static std::optional<std::string> read_file(const std::string& file) {
+static std::optional<std::string> read_file(const fs::path& file) {
     std::ifstream is(file);
     if (!is)
         return std::nullopt;

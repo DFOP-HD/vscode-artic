@@ -103,11 +103,11 @@ private:
     void expand_home() {
         if (pattern.starts_with("~/")) {
             const char* home = std::getenv("HOME");
-            root = home ? home : fs::path("/");
+            root = home ? home : fs::current_path().root_path();
             pattern.erase(0, 2);
         }
         if(pattern[0] == '/') {
-            root = fs::path("/");
+            root = fs::current_path().root_path();
             pattern.erase(0, 1);
         }
     }

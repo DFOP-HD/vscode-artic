@@ -539,6 +539,8 @@ void Server::setup_events_definitions() {
             return occurences->all_occurences;
         }
 
+
+        log::info("[LSP] >>> return TextDocument Definition <not found>");
         return nullptr;
     });
 
@@ -1220,8 +1222,8 @@ void Server::compile_this_and_related_files(const std::filesystem::path& file, s
         lsp::Diagnostic lsp_diag;
         lsp_diag.message = diag.message;
         lsp_diag.range = lsp::Range {
-            .start = lsp::Position { static_cast<uint>(diag.loc.begin.row - 1), static_cast<uint>(diag.loc.begin.col - 1) },
-            .end   = lsp::Position { static_cast<uint>(diag.loc.end.row   - 1), static_cast<uint>(diag.loc.end.col   - 1) }
+            .start = lsp::Position { static_cast<lsp::uint>(diag.loc.begin.row - 1), static_cast<lsp::uint>(diag.loc.begin.col - 1) },
+            .end   = lsp::Position { static_cast<lsp::uint>(diag.loc.end.row   - 1), static_cast<lsp::uint>(diag.loc.end.col   - 1) }
         };
         switch (diag.severity) {
             case Diagnostic::Error:   lsp_diag.severity = lsp::DiagnosticSeverity::Error;       break;

@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
+import * as os from 'os';
 import { LanguageClient, LanguageClientOptions, ServerOptions, TransportKind, State, Trace } from 'vscode-languageclient/node';
 import { execSync } from 'child_process';
 import { existsSync, writeFileSync } from 'fs';
@@ -31,7 +32,9 @@ function findArticBinary(): string {
         return serverPath;
     }
 
-    const bundled = path.join(__dirname, '..', 'build', 'bin', 'artic-lsp');
+    const bundled = os.platform() ==='win32' 
+                        ? path.join(__dirname, '..', 'build', 'bin', 'artic-lsp.exe')
+                        : path.join(__dirname, '..', 'build', 'bin', 'artic-lsp');
     if (existsSync(bundled)) {
         return bundled;
     }

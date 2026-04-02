@@ -7,6 +7,7 @@ function(fetch_half)
         half
         URL https://sourceforge.net/projects/half/files/latest/download
         DOWNLOAD_NAME half.zip
+        DOWNLOAD_EXTRACT_TIMESTAMP true
     )
     FetchContent_MakeAvailable(half)
     set(Half_INCLUDE_DIR ${half_SOURCE_DIR}/include CACHE PATH "Path to half headers" FORCE)
