@@ -107,11 +107,12 @@ public:
     }
 
     // return true if file was known before
-    bool on_config_changed(const fs::path& config_path, config::ConfigLog& log) {
-        log::info("Configuration file changed: {}", config_path.string());
+    bool on_config_changed(fs::path config_path, config::ConfigLog& log) {
+        config_path = fs::weakly_canonical(config_path);
+        log::info("Configuration file changed: {}", config_path.generic_string());
         ConfigPath p {
             .path = config_path,
-            .raw_path_string = config_path.string(),
+            .raw_path_string = config_path.generic_string(),
             .is_optional = false
         };
         bool known = configs_.contains(config_path);
@@ -122,6 +123,9 @@ public:
 
 private:
     ConfigFile* instantiate_config(const ConfigPath& origin, config::ConfigLog& log);
+    ConfigFile* instantiate_config_json(const ConfigPath& origin, config::ConfigLog& log);
+    ConfigFile* instantiate_config_vcxproj(const ConfigPath& origin, config::ConfigLog& log);
+    ConfigFile* instantiate_config_ninja(const ConfigPath& origin, config::ConfigLog& log) { return nullptr; }
 
     Project* discover_project_for_file(fs::path file, config::ConfigLog& log) {
         file = fs::weakly_canonical(file);
@@ -158,7 +162,7 @@ private:
             "artic.json"
         };
         for (auto file_name : file_names) {
-            auto path = dir / file_name;
+            auto path = fs::weakly_canonical(dir / file_name);
             if(!fs::exists(path)) continue;
             if (configs_.contains(path)) 
                 return configs_.at(path).get();

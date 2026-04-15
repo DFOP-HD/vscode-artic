@@ -66,9 +66,45 @@ void Workspace::reload(config::ConfigLog& log) {
 }
 
 ConfigFile* Workspace::instantiate_config(const ConfigPath& origin, config::ConfigLog& log) {
-    if(configs_.contains(origin.path)) {
-        return configs_.at(origin.path).get();
+    auto o = origin;
+    o.path = fs::weakly_canonical(o.path);
+    if(configs_.contains(o.path)) {
+        return configs_.at(o.path).get();
     }
+    if (o.path.has_extension()) {
+        if(o.path.extension() == ".json") return instantiate_config_json(o, log);
+        if(o.path.extension() == ".vcxproj") return instantiate_config_vcxproj(o, log);
+        if(o.path.extension() == ".ninja") return instantiate_config_ninja(o, log);
+    }
+
+    log.error("Unsupported config file extension");
+    return nullptr;
+}
+
+ConfigFile* Workspace::instantiate_config_vcxproj(const ConfigPath& origin, config::ConfigLog& log) {
+    log.file_context = origin.path;
+    auto project = config::parse_vcxproj(origin, log);
+    if(!project) {
+        log.error("Failed to parse vcxproj file");
+        return nullptr;
+    }
+    if(projects_.contains(project->name)) {
+        log.file_context = origin.path;
+        log.warn("ignoring duplicate definition of " + project->name + " in " + project->origin.generic_string(), project->name);
+        return nullptr;
+    }
+    projects_[project->name] = arena_->make_ptr<Project>(*project); // copy
+
+    ConfigFile cfg{
+        .path = origin.path,
+        .projects = {project->name},
+    };
+    configs_[origin.path] = arena_->make_ptr<ConfigFile>(cfg);
+
+    return configs_.at(origin.path).get();
+}
+
+ConfigFile* Workspace::instantiate_config_json(const ConfigPath& origin, config::ConfigLog& log) {
     log::info("Instantiating config: {}", origin.path.generic_string());
     config::ConfigParser parser(origin, log);
     bool success = parser.parse();

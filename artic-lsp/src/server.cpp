@@ -11,6 +11,7 @@
 #include "lsp/error.h"
 #include "lsp/nullable.h"
 
+#include <filesystem>
 #include <limits>
 #include <lsp/types.h>
 #include <lsp/io/standardio.h>
@@ -76,7 +77,7 @@ Server::FileType Server::get_file_type(const fs::path& file) {
     return file.extension() == ".json" || file.extension() == ".artic-lsp" ? FileType::ConfigFile : FileType::SourceFile;
 }
 
-lsp::Location convert_loc(const Loc& loc){
+static lsp::Location convert_loc(const Loc& loc){
     if (!loc.file) throw lsp::RequestError(lsp::Error::InternalError, "Cannot convert location with undefined file");
     return lsp::Location {
         .uri = lsp::FileUri::fromPath(*loc.file),
@@ -87,20 +88,25 @@ lsp::Location convert_loc(const Loc& loc){
     };
 }
 
-Loc convert_loc(const lsp::TextDocumentIdentifier& file, const lsp::Position& pos) {
+static fs::path absolute_path(std::string_view path) {
+    return fs::weakly_canonical(fs::path(path));
+}
+
+static Loc convert_loc(const lsp::TextDocumentIdentifier& file, const lsp::Position& pos) {
     return Loc(
-        std::make_shared<std::string>(fs::path(file.uri.path()).generic_string()),
+        std::make_shared<std::string>(absolute_path(file.uri.path()).generic_string()),
         Loc::Pos { .row = static_cast<int>(pos.line + 1), .col = static_cast<int>(pos.character + 1) }
     );
 }
 
-Loc convert_loc(const lsp::TextDocumentIdentifier& file, const lsp::Range& pos) {
+static Loc convert_loc(const lsp::TextDocumentIdentifier& file, const lsp::Range& pos) {
     return Loc(
-        std::make_shared<std::string>(fs::path(file.uri.path()).generic_string()),
+        std::make_shared<std::string>(absolute_path(file.uri.path()).generic_string()),
         Loc::Pos { .row = static_cast<int>(pos.start.line + 1), .col = static_cast<int>(pos.start.character + 1) },
         Loc::Pos { .row = static_cast<int>(pos.end.line + 1),   .col = static_cast<int>(pos.end.character + 1) }
     );
 }
+
 
 // -----------------------------------------------------------------------------
 //
@@ -215,9 +221,9 @@ void Server::setup_events_modifications() {
     });
     message_handler_.add<notif::TextDocument_DidOpen>([this](notif::TextDocument_DidOpen::Params&& params) {
         log::info("\n[LSP] <<< TextDocument DidOpen");
-        auto path = std::string(params.textDocument.uri.path());
+        auto path = absolute_path(params.textDocument.uri.path());
 
-        if(get_file_type(params.textDocument.uri.path()) == FileType::SourceFile) {
+        if(get_file_type(path) == FileType::SourceFile) {
             
             // skip compilation on open when it was already compiled
             // we need to do this as go to definition shortly opens the text document in vscode 
@@ -236,7 +242,7 @@ void Server::setup_events_modifications() {
         log::info("");
         log::info("--------------------------------");
         log::info("[LSP] <<< TextDocument DidChange");
-        std::filesystem::path file = params.textDocument.uri.path();
+        std::filesystem::path file = absolute_path(params.textDocument.uri.path());
         if(get_file_type(file) == FileType::ConfigFile) {
             // handled in didsave
             return;
@@ -251,7 +257,7 @@ void Server::setup_events_modifications() {
 
     message_handler_.add<notif::TextDocument_DidSave>([this](notif::TextDocument_DidSave::Params&& params) {
         log::info("\n[LSP] <<< TextDocument DidSave");
-        std::filesystem::path file = params.textDocument.uri.path();
+        std::filesystem::path file = absolute_path(params.textDocument.uri.path());
         if(get_file_type(file) == FileType::ConfigFile) {
             workspace::config::ConfigLog log{};
             bool known = workspace_->on_config_changed(file, log);
@@ -270,7 +276,7 @@ void Server::setup_events_modifications() {
     });
     message_handler_.add<notif::Workspace_DidChangeWatchedFiles>([this](notif::Workspace_DidChangeWatchedFiles::Params&& params) {
         for(auto& change : params.changes) {
-            auto path = change.uri.path();
+            auto path = absolute_path(change.uri.path());
 
             switch(change.type.index()) {
                 case lsp::FileChangeType::Created: 
@@ -422,13 +428,13 @@ void Server::setup_events_tokens() {
     // Semantic Tokens ----------------------------------------------------------------------
     message_handler_.add<reqst::TextDocument_SemanticTokens_Full>([this](lsp::SemanticTokensParams&& params) -> reqst::TextDocument_SemanticTokens_Full::Result {
         Timer _("TextDocument_SemanticTokens_Full");
-        std::string file(params.textDocument.uri.path());
+        auto file = absolute_path(params.textDocument.uri.path());
         log::info("\n[LSP] <<< TextDocument SemanticTokens_Full {}", file);
         
         // semantic tokens are not allowed to trigger recompile as this is called right after document changed
-        bool already_compiled = compile && compile->locator.data(file);
+        bool already_compiled = compile && compile->locator.data(file.generic_string());
         if(!already_compiled) return nullptr;
-        auto tokens = collect(compile->name_map, std::string(params.textDocument.uri.path()));
+        auto tokens = collect(compile->name_map, file.generic_string());
         
         log::info("[LSP] >>> Returning {} semantic tokens", tokens.data.size());
         return tokens;
@@ -436,16 +442,16 @@ void Server::setup_events_tokens() {
 
     message_handler_.add<reqst::TextDocument_SemanticTokens_Range>([this](lsp::SemanticTokensRangeParams&& params) -> reqst::TextDocument_SemanticTokens_Range::Result {
         Timer _("TextDocument_SemanticTokens_Range");
-        std::string file(params.textDocument.uri.path());
+        auto file = absolute_path(params.textDocument.uri.path());
         log::info("\n[LSP] <<< TextDocument SemanticTokens_Range {}:{}:{} to {}:{}", 
                  file,
                  params.range.start.line + 1, params.range.start.character + 1,
                  params.range.end.line + 1, params.range.end.character + 1);
         // semantic tokens are not allowed to trigger recompile as this is called right after document changed
-        bool already_compiled = compile && compile->locator.data(file);
+        bool already_compiled = compile && compile->locator.data(file.generic_string());
         if(!already_compiled) return nullptr;
         auto tokens = collect(
-            compile->name_map, std::string(params.textDocument.uri.path()), 
+            compile->name_map, file.generic_string(), 
             params.range.start.line + 1, 
             params.range.end.line + 1);
         
@@ -1253,7 +1259,7 @@ void Server::compile_this_and_related_files(const std::filesystem::path& file, s
 }
 
 void Server::ensure_compile(std::string_view file_view) {
-    fs::path file(file_view);
+    fs::path file = absolute_path(file_view);
     if(get_file_type(file) != FileType::SourceFile) {
         throw lsp::RequestError(lsp::Error::InvalidParams, "File is not an Artic source file");
     }
@@ -1406,14 +1412,11 @@ void Server::setup_events_other() {
     message_handler_.add<artic::reqst::DebugAst>([this](lsp::TextDocumentPositionParams&& params) -> artic::reqst::DebugAst::Result {
         Timer _("artic/debugAst");
         
-        log::info("\n[LSP] <<< artic/debugAst {}:{}:{}", 
-        params.textDocument.uri.path(), 
-                 params.position.line + 1, 
-                 params.position.character + 1);
+        log::info("\n[LSP] <<< artic/debugAst {}:{}:{}", params.textDocument.uri.path(), params.position.line + 1, params.position.character + 1);
 
-        auto file = params.textDocument.uri.path();
+        auto file = absolute_path(params.textDocument.uri.path());
         if(get_file_type(file) != FileType::SourceFile) return nullptr;
-        ensure_compile(file);
+        ensure_compile(file.generic_string());
         if (!compile || !compile->program) {
             throw lsp::RequestError(lsp::Error::InternalError, "No compilation result available");
         }
@@ -1457,22 +1460,22 @@ void Server::setup_events_other() {
 
     message_handler_.add<reqst::TextDocument_InlayHint>([this](reqst::TextDocument_InlayHint::Params&& params) -> reqst::TextDocument_InlayHint::Result {
         Timer _("TextDocument_InlayHint");
-        std::string file(params.textDocument.uri.path());
+        fs::path file = absolute_path(params.textDocument.uri.path());
         log::info("\n[LSP] <<< TextDocument InlayHint {}:{}:{} to {}:{}", 
             file, 
             params.range.start.line + 1, params.range.start.character + 1,
             params.range.end.line + 1, params.range.end.character + 1);
 
         // inlay hints are not allowed to trigger recompile as this is called right after document changed
-        bool already_compiled = compile && compile->locator.data(file);
+        bool already_compiled = compile && compile->locator.data(file.generic_string());
         if(!already_compiled) return nullptr;
 
         lsp::Array<lsp::InlayHint> hints;
-        if(!compile->name_map.files.contains(file))
+        if(!compile->name_map.files.contains(file.generic_string()))
             return hints;
 
         // Convert TypeHint structs to LSP InlayHint objects
-        for (const auto* hint : compile->name_map.files.at(file).with_type_hint) {
+        for (const auto* hint : compile->name_map.files.at(file.generic_string()).with_type_hint) {
             auto& loc = hint->loc;
             auto* type = hint->type;
             // Check if the hint location is within the requested range

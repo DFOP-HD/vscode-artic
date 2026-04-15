@@ -11,6 +11,7 @@
 
 namespace artic::ls::workspace::config {
 
+std::optional<Project> parse_vcxproj(const ConfigPath& origin, ConfigLog& log);
     
 struct ConfigLog {
     using Severity = lsp::DiagnosticSeverity;

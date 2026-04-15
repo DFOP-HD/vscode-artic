@@ -334,6 +334,50 @@ void FilePatternParser::dfs(size_t idx,const fs::path& base){
     }
 };
 
+
+std::optional<Project> parse_vcxproj(const ConfigPath& origin, ConfigLog& log) {
+    /* 
+    Need to parse "artic.exe path/to/file_1 path/to/file_2 ... path/to/file_n --your_artic_args ..."
+    1. find string "artic.exe " in the vcxproj file (there may be multiple, but we will just take the first one for now)
+    2. collect all file paths that appear after "artic.exe " and before " --" (if present) or end of line
+     - these file paths may be relative to the vcxproj file location, so we need to resolve them to absolute paths
+     - we can ignore any arguments after " --"
+    */
+    std::ifstream is(origin.path);
+    if (!is) {
+        log.error("Could not read config file" + origin.path.generic_string());
+        return std::nullopt;
+    }
+    std::string line;
+    while (std::getline(is, line)) {
+        auto find_str = "artic.exe ";
+        auto pos = line.find(find_str);
+        if (pos != std::string::npos) {
+            pos += strlen(find_str);
+            auto end_pos = line.find(" --", pos);
+            if (end_pos == std::string::npos) end_pos = line.size();
+            std::string files_str = line.substr(pos, end_pos - pos);
+            std::istringstream ss(files_str);
+            std::vector<fs::path> files;
+            std::string file;
+            while (ss >> file) {
+                auto abs_path = to_absolute_path(origin.path.parent_path(), file);
+                files.push_back(abs_path);
+                // log.info("Found file in vcxproj: " + abs_path.generic_string());
+            }
+            if (!files.empty()) {
+                Project p;
+                p.name = origin.path.stem().generic_string();
+                p.root_dir = origin.path.parent_path();
+                p.files = files;
+                p.origin = origin.path;
+                return p;
+            }
+        }
+    }
+    return std::nullopt;
+}
+
 } // config
 
 } // namespace artic::ls
