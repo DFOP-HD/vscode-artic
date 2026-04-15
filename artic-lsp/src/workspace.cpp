@@ -72,7 +72,7 @@ ConfigFile* Workspace::instantiate_config(const ConfigPath& origin, config::Conf
         return configs_.at(o.path).get();
     }
     if (o.path.has_extension()) {
-        if(o.path.extension() == ".json") return instantiate_config_json(o, log);
+        if(o.path.extension() == ".json" || o.path.extension() == ".artic-lsp") return instantiate_config_json(o, log);
         if(o.path.extension() == ".vcxproj") return instantiate_config_vcxproj(o, log);
         if(o.path.extension() == ".ninja") return instantiate_config_ninja(o, log);
     }

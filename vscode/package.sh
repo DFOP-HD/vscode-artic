@@ -32,10 +32,16 @@ npm run package
 VSIX_FILE=$(ls -1 artic-language-server-*.vsix | tail -n 1 || true)
 popd >/dev/null
 
+if [[ "$OS" == "Windows_NT" ]]; then
+  CODE_CMD="code.cmd --install-extension"
+else
+  CODE_CMD="code --install-extension"
+fi
+
 echo ""
 if [[ -n "${VSIX_FILE:-}" ]]; then
   echo "✅ Package created: $EXT_DIR/$VSIX_FILE"
-  echo "To install locally: code --install-extension \"$EXT_DIR/$VSIX_FILE\""
+  echo "To install locally: $CODE_CMD \"$EXT_DIR/$VSIX_FILE\""
 else
   echo "⚠ Could not detect output .vsix. Check the packaging logs above."
 fi
@@ -45,7 +51,7 @@ if [[ "${1:-}" == "install" ]]; then
   VSIX_FILE=$(ls *.vsix | tail -n1)
   if [[ -f "$VSIX_FILE" ]]; then
     echo "Installing extension: $VSIX_FILE"
-    code --install-extension "$VSIX_FILE"
+    $CODE_CMD "$VSIX_FILE"
   else
     echo "VSIX package not found. Please run the packaging step first."
     exit 1

@@ -74,7 +74,8 @@ void Server::send_message(const std::string& message, lsp::MessageType type) {
 }
 
 Server::FileType Server::get_file_type(const fs::path& file) {
-    return file.extension() == ".json" || file.extension() == ".artic-lsp" ? FileType::ConfigFile : FileType::SourceFile;
+    auto ext = file.extension();
+    return ext == ".json" || ext == ".artic-lsp" || ext == ".ninja" || ext == ".vcxproj" ? FileType::ConfigFile : FileType::SourceFile;
 }
 
 static lsp::Location convert_loc(const Loc& loc){
@@ -228,7 +229,7 @@ void Server::setup_events_modifications() {
             // skip compilation on open when it was already compiled
             // we need to do this as go to definition shortly opens the text document in vscode 
             // and we don't want to invalidate the definition while looking it up
-            bool already_compiled = compile && compile->locator.data(path);
+            bool already_compiled = compile && compile->locator.data(path.generic_string());
             if(!already_compiled)
                 compile_this_and_related_files(path);
         } else {
@@ -1181,7 +1182,8 @@ void Server::setup_events_completion() {
 //
 // -----------------------------------------------------------------------------
 
-void Server::compile_this_and_related_files(const std::filesystem::path& file, std::string* new_content) {
+void Server::compile_this_and_related_files(std::filesystem::path file, std::string* new_content) {
+    file = fs::absolute(file);
     Timer _("Compile Files");
 
     if(new_content) workspace_->set_file_content(file, std::move(*new_content));

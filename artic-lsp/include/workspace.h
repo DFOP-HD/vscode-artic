@@ -4,6 +4,7 @@
 #include "artic/arena.h"
 #include "artic/log.h"
 #include "lsp/types.h"
+#include <system_error>
 #include <unordered_set>
 #include <vector>
 #include <string>
@@ -98,10 +99,10 @@ public:
             auto files = files_for_project(*project);
             bool is_default_project = !uses_file(*project, file);
             if (is_default_project) {
-                files.push_back(tracked_file(file));
+                files.insert(tracked_file(file));
             }
             log::info("Found file '{}' in project '{}' with {} total files {}", file, project->name, files.size(), is_default_project ? " (default project)" : "");
-            return files;
+            return std::vector<File*>(files.begin(), files.end());
         }
         return {tracked_file(file)};
     }
@@ -181,6 +182,13 @@ private:
                 return project;
             }
         }
+        for (const auto& config : config.includes) {
+            if(auto cfg = instantiate_config(config, log)) {
+                if(auto project = find_project_in_config_using_file(*cfg, file, log)) {
+                    return project;
+                }
+            }
+        }
         if(config.default_project) {
             return try_get_project(*config.default_project);
         }
@@ -188,9 +196,11 @@ private:
     }
 
     bool uses_file(const Project& project, const fs::path& file) const {
-        log::info("does {} use file {}?", project.name, file);
+        log::info("does {} ({} files) use file {}?", project.name, project.files.size(), file.generic_string());
         for (const auto& f : project.files) {
-            if (f == file) return true;
+            std::error_code ec;
+            // log::info("- comparing with project file {}", f.generic_string());
+            if (fs::equivalent(f, file, ec)) return true;
         }
         for (const auto& dep_id : project.dependencies) {
             if(auto dep = try_get_project(dep_id)) {
@@ -200,15 +210,16 @@ private:
         return false;
     }
 
-    std::vector<File*> files_for_project(const Project& project) {
-        std::vector<File*> res;
+    std::unordered_set<File*> files_for_project(const Project& project) {
+        // note: could first collect all dependencies and then collect files for all of them to avoid duplicate file collection
+        std::unordered_set<File*> res;
         for (const auto& f : project.files) {
-            res.push_back(tracked_file(f));
+            res.insert(tracked_file(f));
         }
         for (const auto& dep_id : project.dependencies) {
             if(auto dep = try_get_project(dep_id)) {
                 auto dep_files = files_for_project(*dep);
-                res.insert(res.end(), dep_files.begin(), dep_files.end());
+                res.insert(dep_files.begin(), dep_files.end());
             }
         }
         return res;

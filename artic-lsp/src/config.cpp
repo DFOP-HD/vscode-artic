@@ -198,7 +198,9 @@ std::optional<Project> ConfigParser::parse_project(const nlohmann::json& pj) {
     p.origin = config.path;
     p.file_patterns = pj.value<std::vector<std::string>>("files", {});
     auto files = evaluate_patterns(p);
-    p.files = std::vector<fs::path>(files.begin(), files.end());
+    for (auto& file : files) {
+        p.files.push_back(fs::weakly_canonical(file));
+    }
     return p;
 }
 
@@ -336,6 +338,7 @@ void FilePatternParser::dfs(size_t idx,const fs::path& base){
 
 
 std::optional<Project> parse_vcxproj(const ConfigPath& origin, ConfigLog& log) {
+    log::info("Parsing vcxproj config file: {}", origin.path.generic_string());
     /* 
     Need to parse "artic.exe path/to/file_1 path/to/file_2 ... path/to/file_n --your_artic_args ..."
     1. find string "artic.exe " in the vcxproj file (there may be multiple, but we will just take the first one for now)
@@ -371,6 +374,7 @@ std::optional<Project> parse_vcxproj(const ConfigPath& origin, ConfigLog& log) {
                 p.root_dir = origin.path.parent_path();
                 p.files = files;
                 p.origin = origin.path;
+                log::info("Found project '{}' ({} files) in vcxproj config file: {}", p.name, p.files.size(), origin.path.generic_string());
                 return p;
             }
         }
