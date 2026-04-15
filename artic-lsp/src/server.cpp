@@ -1,5 +1,6 @@
 #include "server.h"
 
+#include "compile.h"
 #include "config.h"
 #include "crash.h"
 #include "workspace.h"
@@ -1306,7 +1307,7 @@ void Server::publish_config_diagnostics(const workspace::config::ConfigLog& log)
 
     std::unordered_map<std::filesystem::path, std::vector<lsp::Diagnostic>> fileDiags;
     std::unordered_map<std::filesystem::path, std::vector<lsp::InlayHint>> fileHints;
-
+    Timer _("Publish Config Diagnostics");
     // create diagnostics
     for (const auto& msg : log.messages) {
         if(!fs::exists(msg.file)) {
@@ -1378,7 +1379,7 @@ void Server::publish_config_diagnostics(const workspace::config::ConfigLog& log)
     // Send diagnostics
     int i = 0;
     for(auto& [file, diags] : fileDiags) {
-        log::info("Publishing {}/{} config diagnostics for file {}", ++i, fileDiags.size(), file.generic_string());
+        // log::info("Publishing {}/{} config diagnostics for file {}", ++i, fileDiags.size(), file.generic_string());
         message_handler_.sendNotification<notif::TextDocument_PublishDiagnostics>(
             notif::TextDocument_PublishDiagnostics::Params {
                 .uri = lsp::FileUri::fromPath(file.generic_string()),
