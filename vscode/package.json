@@ -64,6 +64,11 @@
         "category": "Artic"
       },
       {
+        "command": "artic.discoverVcxprojConfigs",
+        "title": "Discover vcxproj Configs",
+        "category": "Artic"
+      },
+      {
         "command": "artic.debugAst",
         "title": "Debug: Show AST Node at Cursor",
         "category": "Artic"

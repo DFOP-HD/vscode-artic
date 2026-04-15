@@ -3,7 +3,7 @@ import * as path from 'path';
 import * as os from 'os';
 import { LanguageClient, LanguageClientOptions, ServerOptions, TransportKind, State, Trace } from 'vscode-languageclient/node';
 import { execSync } from 'child_process';
-import { existsSync, writeFileSync } from 'fs';
+import { existsSync } from 'fs';
 
 let client: LanguageClient | undefined = undefined;
 let expectedStop = false;
@@ -23,6 +23,8 @@ const workspaceConfigTemplate = `{
     "include": [
     ]
 }`;
+
+const workspaceConfigExcludeGlob = '**/{.git,.vs,node_modules,out,dist}/**';
 
 // Config > Bundled > PATH
 function findArticBinary(): string {
@@ -142,6 +144,115 @@ function startClient(context: vscode.ExtensionContext) {
     }
 }
 
+function toUtf8(bytes: Uint8Array): string {
+    return Buffer.from(bytes).toString('utf8');
+}
+
+function toPosixRelativePath(fromDir: string, toFile: string): string {
+    return path.relative(fromDir, toFile).replace(/\\/g, '/');
+}
+
+async function findArticVcxprojFiles(workspaceFolder: vscode.WorkspaceFolder): Promise<vscode.Uri[]> {
+    const vcxprojFiles = await vscode.workspace.findFiles(
+        new vscode.RelativePattern(workspaceFolder, '**/*.vcxproj'),
+        workspaceConfigExcludeGlob,
+    );
+
+    const matches: vscode.Uri[] = [];
+    for (const file of vcxprojFiles) {
+        try {
+            const content = toUtf8(await vscode.workspace.fs.readFile(file));
+            if (content.toLowerCase().includes('artic')) {
+                matches.push(file);
+            }
+        } catch (error) {
+            console.warn(`Failed to inspect vcxproj file ${file.fsPath}:`, error);
+        }
+    }
+
+    matches.sort((left, right) => left.fsPath.localeCompare(right.fsPath));
+    return matches;
+}
+
+async function updateWorkspaceConfigIncludes(workspaceFolder: vscode.WorkspaceFolder, vcxprojFiles: vscode.Uri[]): Promise<{ created: boolean; added: number; configPath: string; }> {
+    const configUri = vscode.Uri.joinPath(workspaceFolder.uri, 'artic.json');
+    const configDir = path.dirname(configUri.fsPath);
+    const discoveredIncludes = vcxprojFiles.map((file) => toPosixRelativePath(configDir, file.fsPath));
+
+    let created = false;
+    let config: Record<string, unknown>;
+    try {
+        const existing = toUtf8(await vscode.workspace.fs.readFile(configUri));
+        config = JSON.parse(existing) as Record<string, unknown>;
+    } catch (error) {
+        if (!(error instanceof vscode.FileSystemError) || error.code !== 'FileNotFound') {
+            throw new Error(`Failed to read ${configUri.fsPath}: ${(error as Error).message}`);
+        }
+        created = true;
+        config = {
+            'artic-config': '2.0',
+            include: []
+        };
+    }
+
+    const includeValue = config.include;
+    if (includeValue !== undefined && !Array.isArray(includeValue)) {
+        throw new Error(`'include' in ${configUri.fsPath} must be an array`);
+    }
+    if (Array.isArray(includeValue) && includeValue.some((value) => typeof value !== 'string')) {
+        throw new Error(`'include' in ${configUri.fsPath} must only contain strings`);
+    }
+
+    const existingIncludes = Array.isArray(includeValue)
+        ? includeValue
+        : [];
+
+    const mergedIncludes = [...existingIncludes];
+    let added = 0;
+    for (const includePath of discoveredIncludes) {
+        if (!mergedIncludes.includes(includePath)) {
+            mergedIncludes.push(includePath);
+            added += 1;
+        }
+    }
+
+    config['artic-config'] = typeof config['artic-config'] === 'string' ? config['artic-config'] : '2.0';
+    config.include = mergedIncludes;
+
+    const serialized = `${JSON.stringify(config, null, 4)}\n`;
+    await vscode.workspace.fs.writeFile(configUri, Buffer.from(serialized, 'utf8'));
+
+    return {
+        created,
+        added,
+        configPath: configUri.fsPath,
+    };
+}
+
+async function discoverVcxprojConfigs(): Promise<void> {
+    const workspaceFolders = vscode.workspace.workspaceFolders;
+    if (!workspaceFolders || workspaceFolders.length === 0) {
+        vscode.window.showWarningMessage('Open a workspace folder before discovering vcxproj files.');
+        return;
+    }
+
+    await vscode.window.withProgress({
+        location: vscode.ProgressLocation.Notification,
+        title: 'Discovering Artic vcxproj files',
+        cancellable: false,
+    }, async (progress) => {
+        const summaries: string[] = [];
+        for (const workspaceFolder of workspaceFolders) {
+            progress.report({ message: `Scanning ${workspaceFolder.name}` });
+            const vcxprojFiles = await findArticVcxprojFiles(workspaceFolder);
+            const result = await updateWorkspaceConfigIncludes(workspaceFolder, vcxprojFiles);
+            summaries.push(`${workspaceFolder.name}: ${vcxprojFiles.length} matches, ${result.added} added${result.created ? ', created artic.json' : ''}`);
+        }
+
+        vscode.window.showInformationMessage(summaries.join(' | '));
+    });
+}
+
 export function activate(context: vscode.ExtensionContext) {
     startClient(context);
 
@@ -154,6 +265,16 @@ export function activate(context: vscode.ExtensionContext) {
         startClient(context);
     });
     context.subscriptions.push(restartCommand);
+
+    const discoverVcxprojCommand = vscode.commands.registerCommand('artic.discoverVcxprojConfigs', async () => {
+        try {
+            await discoverVcxprojConfigs();
+        } catch (error: any) {
+            vscode.window.showErrorMessage(`Failed to discover vcxproj files: ${error.message}`);
+            console.error('Discover vcxproj configs error:', error);
+        }
+    });
+    context.subscriptions.push(discoverVcxprojCommand);
 
     const debugAstCommand = vscode.commands.registerCommand('artic.debugAst', async () => {
         try {
