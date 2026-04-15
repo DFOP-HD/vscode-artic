@@ -1309,6 +1309,10 @@ void Server::publish_config_diagnostics(const workspace::config::ConfigLog& log)
 
     // create diagnostics
     for (const auto& msg : log.messages) {
+        if(!fs::exists(msg.file)) {
+            log::info("Config message for non-existent file {}: {}", msg.file.generic_string(), msg.message);
+            continue;
+        }
         std::optional<std::string> propagate_to_file;
         // Diagnosics for the file itself
         auto find_in_file = [](std::filesystem::path const& file, std::string_view literal) -> std::vector<lsp::Range> {
@@ -1334,20 +1338,20 @@ void Server::publish_config_diagnostics(const workspace::config::ConfigLog& log)
         };
         std::vector<lsp::Range> occurrences;
         std::string file = msg.file.generic_string();
-        std::string literal = msg.context.value().literal;
+        auto context = msg.context;
 
         if(propagate_to_file) {
             file = *propagate_to_file;
-            literal = "include";
+            context = workspace::config::ConfigLog::Context{.literal="include"};
         }
 
         if(msg.context.has_value()) {
-            occurrences = find_in_file(file, literal);
+            occurrences = find_in_file(file, msg.context.value().literal);
         }
 
         // bool sendDiagnostic = occurrences.empty() || msg.severity != lsp::DiagnosticSeverity::Hint;
         bool sendDiagnostic = true;
-        if(sendDiagnostic) {
+        if(sendDiagnostic && fs::exists(msg.file)) {
             lsp::Diagnostic diag;
             diag.message = msg.message;
             diag.severity = msg.severity;
@@ -1372,7 +1376,9 @@ void Server::publish_config_diagnostics(const workspace::config::ConfigLog& log)
     }
 
     // Send diagnostics
+    int i = 0;
     for(auto& [file, diags] : fileDiags) {
+        log::info("Publishing {}/{} config diagnostics for file {}", ++i, fileDiags.size(), file.generic_string());
         message_handler_.sendNotification<notif::TextDocument_PublishDiagnostics>(
             notif::TextDocument_PublishDiagnostics::Params {
                 .uri = lsp::FileUri::fromPath(file.generic_string()),
