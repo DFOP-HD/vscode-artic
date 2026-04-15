@@ -225,13 +225,7 @@ void Server::setup_events_modifications() {
         auto path = absolute_path(params.textDocument.uri.path());
 
         if(get_file_type(path) == FileType::SourceFile) {
-            
-            // skip compilation on open when it was already compiled
-            // we need to do this as go to definition shortly opens the text document in vscode 
-            // and we don't want to invalidate the definition while looking it up
-            bool already_compiled = compile && compile->locator.data(path.generic_string());
-            if(!already_compiled)
-                compile_this_and_related_files(path);
+            ensure_compile(path.string());
         } else {
             workspace::config::ConfigLog log{};
             bool known = workspace_->on_config_changed(path, log);
@@ -445,7 +439,7 @@ void Server::setup_events_tokens() {
         Timer _("TextDocument_SemanticTokens_Range");
         auto file = absolute_path(params.textDocument.uri.path());
         log::info("\n[LSP] <<< TextDocument SemanticTokens_Range {}:{}:{} to {}:{}", 
-                 file,
+                 file.generic_string(),
                  params.range.start.line + 1, params.range.start.character + 1,
                  params.range.end.line + 1, params.range.end.character + 1);
         // semantic tokens are not allowed to trigger recompile as this is called right after document changed
@@ -1197,6 +1191,9 @@ void Server::compile_this_and_related_files(std::filesystem::path file, std::str
         return;
     }
     log::info("Compiling {} file(s)", files.size());
+    for (const auto* f : files) {
+        log::info(" - {}", f->path.generic_string());
+    }
 
     // Initialize
     compile.emplace();
@@ -1266,6 +1263,14 @@ void Server::ensure_compile(std::string_view file_view) {
         throw lsp::RequestError(lsp::Error::InvalidParams, "File is not an Artic source file");
     }
     bool already_compiled = compile && compile->locator.data(file.generic_string());
+    // if(compile){
+    //     log::info("Already compiled files:");
+    //     for(auto& [path, _] : compile->locator.info) {
+    //         log::info(" - {}", path);
+    //     }
+    // }
+    // log::info("is {} already compiled: {}", file.generic_string(), already_compiled);
+
     if (!already_compiled) compile_this_and_related_files(file);
     if (!compile) throw lsp::RequestError(lsp::Error::ServerCancelled, "Did not get a compilation result");
 }
@@ -1464,7 +1469,7 @@ void Server::setup_events_other() {
         Timer _("TextDocument_InlayHint");
         fs::path file = absolute_path(params.textDocument.uri.path());
         log::info("\n[LSP] <<< TextDocument InlayHint {}:{}:{} to {}:{}", 
-            file, 
+            file.generic_string(), 
             params.range.start.line + 1, params.range.start.character + 1,
             params.range.end.line + 1, params.range.end.character + 1);
 

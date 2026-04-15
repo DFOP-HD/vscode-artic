@@ -101,7 +101,7 @@ public:
             if (is_default_project) {
                 files.insert(tracked_file(file));
             }
-            log::info("Found file '{}' in project '{}' with {} total files {}", file, project->name, files.size(), is_default_project ? " (default project)" : "");
+            log::info("Found file '{}' in project '{}' with {} total files {}", file.generic_string(), project->name, files.size(), is_default_project ? " (default project)" : "");
             return std::vector<File*>(files.begin(), files.end());
         }
         return {tracked_file(file)};
@@ -226,7 +226,11 @@ private:
     }
 
     File* tracked_file(fs::path file) {
-        file = fs::weakly_canonical(file);
+        auto file_str = file.generic_string();
+        #ifdef _WIN32
+            std::transform(file_str.begin(), file_str.end(), file_str.begin(), ::tolower);
+        #endif
+        file = fs::weakly_canonical(file_str);
         if (!files_.contains(file)) {
             files_.insert({file, arena_->make_ptr<File>(file)});
         }
