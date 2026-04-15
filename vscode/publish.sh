@@ -9,7 +9,7 @@ if git status --porcelain | grep .; then
     exit 1
 fi
 
-if git -C artic-lsp status --porcelain | grep .; then
+if git -C ../artic-lsp status --porcelain | grep .; then
     echo "Uncommitted changes found in artic-lsp repository."
     exit 1
 fi
