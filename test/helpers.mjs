@@ -100,3 +100,22 @@ export function samePath(a, b) {
     const norm = (p) => resolve(p).replace(/\\/g, '/').toLowerCase();
     return norm(a) === norm(b);
 }
+
+/**
+ * Zero-based LSP position of the `occurrence`-th appearance of `needle` in `text`.
+ * Keeps navigation tests readable and immune to fixtures gaining or losing lines.
+ */
+export function locate(text, needle, occurrence = 1) {
+    let idx = -1;
+    for (let i = 0; i < occurrence; i++) {
+        idx = text.indexOf(needle, idx + 1);
+        if (idx === -1) {
+            throw new Error(`Could not find occurrence ${occurrence} of ${JSON.stringify(needle)}`);
+        }
+    }
+    const before = text.slice(0, idx);
+    return {
+        line: before.split('\n').length - 1,
+        character: idx - (before.lastIndexOf('\n') + 1),
+    };
+}

@@ -110,7 +110,7 @@ static lsp::Location convert_loc(const Loc& loc){
 }
 
 static fs::path absolute_path(std::string_view path) {
-    return fs::weakly_canonical(fs::path(path));
+    return workspace::canonical_path(fs::path(path));
 }
 
 static Loc convert_loc(const lsp::TextDocumentIdentifier& file, const lsp::Position& pos) {

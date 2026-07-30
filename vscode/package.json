@@ -98,7 +98,7 @@
   },
   "scripts": {
     "vscode:prepublish": "npm run esbuild-base -- --minify",
-    "esbuild-base": "esbuild ./src/extension.ts --bundle --outfile=out/extension.js --external:vscode --format=cjs --platform=node",
+    "esbuild-base": "esbuild ./src/extension.ts --bundle --outfile=out/extension.js --external:vscode --format=cjs --platform=node --target=node16",
     "esbuild": "npm run esbuild-base -- --sourcemap",
     "compile": "npm run esbuild-base -- --sourcemap",
     "watch": "npm run esbuild-base -- --sourcemap --watch",
@@ -108,12 +108,17 @@
   "devDependencies": {
     "@types/node": "^18.0.0",
     "@types/vscode": "^1.75.0",
-    "@vscode/vsce": "^2.22.0",
+    "@vscode/vsce": "^3.9.2",
     "esbuild": "^0.27.2",
     "typescript": "^4.9.0"
   },
   "dependencies": {
     "vscode-languageclient": "^8.1.0"
+  },
+  "overrides": {
+    "vscode-languageclient": {
+      "minimatch": "^10.2.6"
+    }
   },
   "files": [
     "out/extension.js",

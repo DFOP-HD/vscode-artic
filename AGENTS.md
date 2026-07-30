@@ -93,6 +93,12 @@ so they exercise the shipped protocol surface rather than internals. The CTest s
 from the submodule and is the regression guard for any change to the artic fork; it needs
 the `artic` target built.
 
+Diagnostics are *not* enough coverage. A regression that broke semantic tokens, inlay hints
+and go-to-definition for every `.vcxproj`-derived project shipped unnoticed because only
+diagnostics were tested. Any change touching path handling, the workspace or the compile
+cache must be covered by [test/language-features.test.mjs](test/language-features.test.mjs)
+and [test/path-identity.test.mjs](test/path-identity.test.mjs).
+
 **All `.art` / `.impala` fixture code must be written by us** — never copied from other
 AnyDSL repos (licensing). Sample projects such as `D:/anydsl-metaproject/stincilla` may be
 read for reference only. Every fixture that is supposed to be valid must be proven valid
@@ -139,8 +145,41 @@ verified, and say so if you deliberately skipped one.
    (or, if it is a negative fixture, fails with exactly the diagnostic being asserted).
 6. **Upstream-diff reviewed** — for submodule changes, `git -C artic diff --stat upstream/master...HEAD`
    was inspected and the growth is justified. Unrelated reformatting is reverted.
-7. **Docs updated** — user-facing behaviour in [README.md](README.md), agent-facing facts here.
-8. **Tree clean** — `git status` shows only intended files; no build output, no scratch dirs.
+7. **Dependencies audited** — `npm audit` in `vscode/` reports **0 vulnerabilities**. Never
+   accept a finding silently: fix it, or record the justification here. See
+   [Dependency security](#dependency-security) before reaching for `npm audit fix --force`.
+8. **Docs updated** — user-facing behaviour in [README.md](README.md), agent-facing facts here.
+9. **Tree clean** — `git status` shows only intended files; no build output, no scratch dirs.
+
+## Dependency security
+
+`npm audit` must be clean. The npm-suggested fix is frequently *not* the right one, so verify
+before applying:
+
+- **`npm audit fix --force` is not a solution on its own.** For the `brace-expansion` DoS
+  advisory it wanted `vscode-languageclient@8 -> 10`, which raises `engines.vscode` from
+  `^1.75.0` to `^1.91.0`. That is a user-visible platform bump and works against
+  backlog item 5 (Cursor support). Prefer a scoped `overrides` entry.
+- **Prove the override at the API level, not just via the audit output.** A blanket
+  `"overrides": { "brace-expansion": "^5.0.9" }` silences the audit but *breaks the extension
+  at runtime*: `brace-expansion@5` exports `{ expand }` where v1/v2 exported a bare function,
+  so `minimatch@5` throws `TypeError: expand is not a function` on any pattern containing
+  braces. Audit-clean and working are different things.
+- What is actually in place:
+
+  ```json
+  "overrides": { "vscode-languageclient": { "minimatch": "^10.2.6" } }
+  ```
+
+  `vscode-languageclient@8` only ever calls `new minimatch.Minimatch(pattern, opts)`, which
+  `minimatch@10` still exports, and `minimatch@10` depends on the patched `brace-expansion@5`.
+  This keeps the client at v8 and the engine floor at `^1.75.0`.
+- **`--target=node16` in `esbuild-base` is load-bearing.** `minimatch@10`/`brace-expansion@5`
+  declare `engines.node >= 20`, but we still support VS Code 1.75 (Electron 19 / Node 16).
+  esbuild downlevels the syntax; drop the target and the bundle can break on older VS Code.
+- After any dependency change, re-verify: `npm run compile`, `npx vsce package`, and
+  `node --test 'test/*.test.mjs'`. `@vscode/vsce` is dev-only (it just builds the VSIX), but
+  it was the source of 8 of the original 11 findings — keep it current.
 
 ## Backlog
 
@@ -187,6 +226,21 @@ Ordered. Keep status markers current.
 
 ## Gotchas
 
+- **A file's identity is its canonicalised path string.** `workspace::canonical_path()` in
+  [artic-lsp/src/workspace.cpp](artic-lsp/src/workspace.cpp) is the single place that
+  produces it; everything that turns a path or URI into a lookup key must go through it.
+  `File::path` is handed to the lexer and the locator, so every `Loc::file` string, every
+  `name_map` key and every diagnostic URI derives from it.
+  Producers disagree about spelling: VS Code always sends `file:///d:/...` (lower-case
+  drive), CMake-generated `.vcxproj` files contain `D:\...`. `std::filesystem::weakly_canonical`
+  normalises **neither case nor drive letter** on Windows (verified on MinGW *and* MSVC),
+  so without the fold the same file gets two identities depending on which producer
+  registered it first. Symptom: diagnostics still work, but semantic tokens, inlay hints
+  and go-to-definition all silently return nothing, and every request recompiles the whole
+  project twice because `already_compiled` is never true. Guarded by
+  [test/path-identity.test.mjs](test/path-identity.test.mjs).
+  Only the drive letter is folded — lowercasing the whole path would stop diagnostic URIs
+  matching the document VS Code opened.
 - `artic-lsp/src/main.cpp` ignores `argv`; the extension still passes `--lsp`, which is a no-op.
 - `libartic` exports `ENABLE_LSP` as a **PUBLIC** compile definition, so it leaks to every
   consumer of the library, including the `artic` executable.

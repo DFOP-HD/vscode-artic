@@ -17,6 +17,24 @@
 
 namespace artic::ls::workspace {
 
+fs::path canonical_path(const fs::path& file) {
+    std::error_code ec;
+    auto path = fs::weakly_canonical(file, ec);
+    if (ec) path = file.lexically_normal();
+
+#ifdef _WIN32
+    // Fold the drive letter to lower case, the spelling VS Code uses in `file:` URIs.
+    // Everything else is left alone: the rest of the path is echoed back to the editor
+    // in diagnostic URIs, and lowercasing it would stop those matching the open document.
+    auto str = path.generic_string();
+    if (str.size() >= 2 && str[1] == ':')
+        str[0] = static_cast<char>(std::tolower(static_cast<unsigned char>(str[0])));
+    return fs::path(str);
+#else
+    return path;
+#endif
+}
+
 // File ----------------------------------------------------------------------
 
 static std::optional<std::string> read_file(const fs::path& file) {
@@ -67,7 +85,7 @@ void Workspace::reload(config::ConfigLog& log) {
 
 ConfigFile* Workspace::instantiate_config(const ConfigPath& origin, config::ConfigLog& log) {
     auto o = origin;
-    o.path = fs::weakly_canonical(o.path);
+    o.path = canonical_path(o.path);
     if(configs_.contains(o.path)) {
         return configs_.at(o.path).get();
     }

@@ -35,9 +35,14 @@ ctest --test-dir artic-lsp/buildGcc -E "^thorin_"
 | Path | Purpose |
 | ---- | ------- |
 | `lsp-client.mjs` | Minimal JSON-RPC/LSP client. Handles framing, requests, notifications and URI normalisation. |
-| `helpers.mjs` | Binary discovery and staging of fixtures into temp directories. |
+| `helpers.mjs` | Binary discovery, staging of fixtures into temp directories, and `locate()` for turning source text into LSP positions. |
 | `fixtures/` | Self-authored `.art` sources and `artic.json` configs. |
-| `*.test.mjs` | The suites. |
+| `server-lifecycle.test.mjs` | Handshake and advertised capabilities. |
+| `source-diagnostics.test.mjs` | Diagnostics for `.art` sources: position, URI shape, attribution, clearing. |
+| `config-diagnostics.test.mjs` | Diagnostics for `artic.json` / `.artic-lsp`. |
+| `language-features.test.mjs` | Semantic tokens, inlay hints, go-to-definition, find-references. |
+| `path-identity.test.mjs` | The same features when the file is reached through a `.vcxproj` that spells the path differently from the editor. |
+| `fixtures.test.mjs` | Compiles the fixtures with the real `artic` binary. |
 
 Fixtures are copied to a temp directory before each suite, so tests may freely
 edit config files and sources without dirtying the repository.
@@ -50,6 +55,13 @@ document. To assert something is *not* published, use `settle()` and then check
 
 URIs must be compared with `normalizeUri` (or via `diagnosticsFor`): the server
 emits VS Code's encoding (`file:///C%3A/...`) while Node produces `file:///C:/...`.
+
+Semantic tokens and inlay hints deliberately refuse to trigger a compile, so a
+document must be opened *and* its diagnostics awaited before requesting them —
+otherwise the server legitimately answers `null` and the test proves nothing.
+
+Do not hard-code line/column numbers. Use `locate(text, 'fn dot')`, which keeps a
+test readable and stops it rotting when a fixture gains a comment line.
 
 ## Fixture rules
 

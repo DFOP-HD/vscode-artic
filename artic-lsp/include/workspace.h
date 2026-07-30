@@ -18,6 +18,17 @@ namespace fs = std::filesystem;
 template <typename T> using Ptr = arena_ptr<T>;
 template <typename T> using PtrVector = std::vector<Ptr<T>>;
 
+// The canonical spelling of a path. This is a *file's identity*: it is what gets handed to
+// the lexer and the locator, so every `Loc::file` string and every diagnostic URI derives
+// from it, and any lookup keyed by path compares against it.
+//
+// Producers disagree about the spelling of the drive letter on Windows: VS Code always
+// sends `d:/...` in `file:` URIs, while CMake-generated `.vcxproj` files contain `D:\...`.
+// `weakly_canonical` normalises neither case nor drive letter, so without this fold the
+// same file gets two identities depending on which producer registered it first, and
+// semantic tokens, inlay hints and go-to-definition all silently return nothing.
+fs::path canonical_path(const fs::path& file);
+
 struct File {
     fs::path path;
     std::optional<std::string> text;
@@ -109,7 +120,7 @@ public:
 
     // return true if file was known before
     bool on_config_changed(fs::path config_path, config::ConfigLog& log) {
-        config_path = fs::weakly_canonical(config_path);
+        config_path = canonical_path(config_path);
         log::info("Configuration file changed: {}", config_path.generic_string());
         ConfigPath p {
             .path = config_path,
@@ -230,7 +241,7 @@ private:
     // file's identity: diagnostics are published under File::path, and a lowercased
     // URI does not match the one the editor opened.
     static fs::path lookup_key(const fs::path& file) {
-        auto key = fs::weakly_canonical(file).generic_string();
+        auto key = canonical_path(file).generic_string();
         #ifdef _WIN32
             std::transform(key.begin(), key.end(), key.begin(),
                            [](unsigned char c) { return std::tolower(c); });
@@ -242,7 +253,7 @@ private:
         auto key = lookup_key(file);
         if (auto it = files_.find(key); it != files_.end())
             return it->second.get();
-        auto path = fs::weakly_canonical(std::move(file));
+        auto path = canonical_path(file);
         return files_.insert({key, arena_->make_ptr<File>(std::move(path))}).first->second.get();
     }
 

@@ -70,12 +70,12 @@ namespace config {
 static const char* HOME = std::getenv("HOME");
 
 static fs::path to_absolute_path(fs::path base_dir, std::string path) {
-    if(path.starts_with("/")) return fs::weakly_canonical(path);
+    if(path.starts_with("/")) return canonical_path(path);
     if(path.starts_with("~/")) {
         base_dir = fs::path(HOME);
         path = path.substr(2);
     }
-    return fs::weakly_canonical(base_dir / path);
+    return canonical_path(base_dir / path);
 }
 
 bool ConfigParser::parse() {
@@ -200,7 +200,7 @@ std::optional<Project> ConfigParser::parse_project(const nlohmann::json& pj) {
     p.file_patterns = pj.value<std::vector<std::string>>("files", {});
     auto files = evaluate_patterns(p);
     for (auto& file : files) {
-        p.files.push_back(fs::weakly_canonical(file));
+        p.files.push_back(canonical_path(file));
     }
     return p;
 }
