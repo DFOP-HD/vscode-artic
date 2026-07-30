@@ -225,16 +225,25 @@ private:
         return res;
     }
 
-    File* tracked_file(fs::path file) {
-        auto file_str = file.generic_string();
+    // Key used to look files up. On Windows paths are case-insensitive, so the key is
+    // lowercased to avoid tracking the same file twice. It must never be used as the
+    // file's identity: diagnostics are published under File::path, and a lowercased
+    // URI does not match the one the editor opened.
+    static fs::path lookup_key(const fs::path& file) {
+        auto key = fs::weakly_canonical(file).generic_string();
         #ifdef _WIN32
-            std::transform(file_str.begin(), file_str.end(), file_str.begin(), ::tolower);
+            std::transform(key.begin(), key.end(), key.begin(),
+                           [](unsigned char c) { return std::tolower(c); });
         #endif
-        file = fs::weakly_canonical(file_str);
-        if (!files_.contains(file)) {
-            files_.insert({file, arena_->make_ptr<File>(file)});
-        }
-        return files_.at(file).get();
+        return key;
+    }
+
+    File* tracked_file(fs::path file) {
+        auto key = lookup_key(file);
+        if (auto it = files_.find(key); it != files_.end())
+            return it->second.get();
+        auto path = fs::weakly_canonical(std::move(file));
+        return files_.insert({key, arena_->make_ptr<File>(std::move(path))}).first->second.get();
     }
 
     Project* try_get_project(const Project::Identifier& project_id) const {

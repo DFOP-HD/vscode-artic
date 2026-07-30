@@ -9,6 +9,13 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+# Registers artic's own CTest suite, which guards the artic fork against regressions.
+# Requires the `artic` target: cmake --build <dir> --target artic
+option(ARTIC_LSP_ENABLE_ARTIC_TESTS "Register the artic compiler test suite" ON)
+if(ARTIC_LSP_ENABLE_ARTIC_TESTS)
+    include(CTest)
+endif()
+
 if(UNIX)
     if (CMAKE_BUILD_TYPE STREQUAL "Debug")
         # Apply sanitizer flags globally before including dependencies

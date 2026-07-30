@@ -1,0 +1,6 @@
+// Fixture: valid file that lives in the same project as type_error.art.
+// Used to assert that a failure in a sibling file does not leak diagnostics into this one.
+
+fn healthy(a: i32, b: i32) -> i32 {
+    a + b
+}

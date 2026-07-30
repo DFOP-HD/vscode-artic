@@ -1,0 +1,121 @@
+// Scratch: every code example from .github/skills/artic-language/SKILL.md,
+// assembled so the compiler can confirm the guide is accurate.
+
+fn add(a: i32, b: i32) -> i32 { a + b }
+fn mul(a: i32, b: i32) = a * b;
+fn inferred() = 1;
+
+struct Vec2 { x: f32, y: f32 }
+struct Pair(i32, i64);
+struct Unit;
+
+enum Option[T] { None, Some(T) }
+enum Shape { Dot, Line(i32), Box { w: i32, h: i32 } }
+
+type Real = f32;
+
+static counter = 0;
+static mut total = 0;
+
+mod geometry { fn area() = 1; }
+use geometry as geo;
+
+fn fact(n: i32) -> i32 = if n <= 1 { 1 } else { n * fact(n - 1) };
+
+fn select[T](c: bool, a: T, b: T) -> T = if c { a } else { b };
+fn chosen() = select[i32](true, 0, 1);
+
+fn type_zoo(_a: [i32 * 4], _b: &[i32], _c: &i32, _d: &mut i32,
+            _e: (i32, f32), _f: fn(i32) -> bool, _g: simd[i32 * 4],
+            _h: &addrspace(1)i32) = ();
+
+fn literals() {
+    let a: u8 = 1;
+    let b = 1;
+    let c: f32 = 1;
+    let s = "abcd";
+    let x: i32 = (1: i32): i32;
+    let _ = (a, b, c, s, x);
+}
+
+fn exprs(shape: Shape, maybe: Option[i32]) -> i32 {
+    let p = Vec2 { x = 1.0, y = 2.0 };
+    let q = p.{ y = 3.0 };
+    let n = p.x;
+    let t = (1, 2); let first = t.0;
+
+    let arr = [1, 2, 3];
+    let zeros = [0; 4];
+    let elem = arr(1);
+
+    let sign = if n > 0.0 { 1 } else { -1 };
+
+    let m = match shape {
+        Shape::Dot => 0,
+        Shape::Line(len) => len,
+        Shape::Box { w = w_, ... } => w_
+    };
+
+    if let Option[i32]::Some(v) = maybe { use_it(v) }
+    while let Option[i32]::Some(v) = next_val() { use_it(v) }
+
+    q.y as i32 + first + zeros(0) + elem + sign + m
+}
+
+fn use_it(_v: i32) -> () {}
+fn next_val() -> Option[i32] = Option[i32]::None;
+
+fn bump(mut x: i32) -> i32 { x += 1; x }
+fn mutability() {
+    let mut buf = [1, 2];
+    buf(1) = 0;
+    let _r = &mut buf;
+    let _ = bump(1);
+}
+
+fn @range(body: fn(i32) -> ()) -> fn(i32, i32) -> () {
+    fn @(?beg & ?end) loop(beg: i32, end: i32) -> () {
+        if beg < end {
+            @body(beg);
+            loop(beg + 1, end)
+        }
+    }
+    loop
+}
+
+fn sum_to(n: i32) -> i32 {
+    let mut acc = 0;
+    for i in range(0, n) { acc += i; }
+    acc
+}
+
+#[export] fn visible() -> i32 { 1 }
+#[import(cc = "C", name = "puts")] fn puts(_: &[u8]) -> i32;
+#[import(cc = "builtin")] fn sizeof[T]() -> i64;
+
+struct Emergency { number: i32 }
+
+fn call_help(implicit e: Emergency) = e.number;
+
+mod eu {
+    implicit super::Emergency = super::Emergency { number = 112 };
+    #[export] fn dial() = super::call_help();
+}
+
+fn keep_alive() -> i64 {
+    let _ = (add(1, 2), mul(3, 4), inferred(), fact(3), chosen(), visible(), sum_to(3));
+    let _ = Pair(1, 2);
+    let _ = Unit;
+    let _: Real = 1.0;
+    let _ = geo::area();
+    let _ = counter + total;
+    literals();
+    mutability();
+    let _ = puts("hi");
+    let _ = exprs(Shape::Dot, Option[i32]::None);
+    type_zoo([0, 0, 0, 0], &[1, 2], &1, &mut total, (1, 1.0), |_| true,
+             simd[1, 2, 3, 4], bitcast[&addrspace(1)i32](0 as i64));
+    sizeof[i32]()
+}
+
+#[import(cc = "builtin")] fn bitcast[T, U](_src: U) -> T;

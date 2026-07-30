@@ -1,0 +1,19 @@
+// Fixture: valid Artic source used to test cross-file navigation.
+// Written for this repository - do not replace with code from other AnyDSL projects.
+
+struct Vec2 {
+    x: f32,
+    y: f32
+}
+
+fn add(a: Vec2, b: Vec2) -> Vec2 {
+    Vec2 { x = a.x + b.x, y = a.y + b.y }
+}
+
+fn scale(v: Vec2, factor: f32) -> Vec2 {
+    Vec2 { x = v.x * factor, y = v.y * factor }
+}
+
+fn dot(a: Vec2, b: Vec2) -> f32 {
+    a.x * b.x + a.y * b.y
+}

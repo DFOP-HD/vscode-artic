@@ -1,0 +1,13 @@
+// Fixture: consumes declarations from geometry.art, so navigation and
+// diagnostics have to work across files within the same project.
+
+fn length_squared(v: Vec2) -> f32 {
+    dot(v, v)
+}
+
+fn main() -> i32 {
+    let a = Vec2 { x = 1.0, y = 2.0 };
+    let b = scale(a, 2.0);
+    let c = add(a, b);
+    if length_squared(c) > 0.0 { 0 } else { 1 }
+}

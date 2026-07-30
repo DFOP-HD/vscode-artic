@@ -1,0 +1,8 @@
+// Fixture: contains exactly one deliberate type error on the marked line.
+// The LSP test suite asserts the diagnostic is reported here, not in another file.
+
+fn mismatch() -> i32 {
+    let x: i32 = 1;
+    let y: f32 = 2.0;
+    x + y // ERROR: operands have different types
+}
