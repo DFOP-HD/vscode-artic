@@ -161,7 +161,6 @@ vscode-artic
 | language-configuration.json // Brackets and indentation rules
 |
 | build-lsp.sh                // builds artic-lsp
-| build-lsp.sh                // builds artic-lsp
 | package.sh                  // builds artic-lsp and extension, packages the extension
 | publish.sh                  // builds and packages everything, publishes a new release (internal)
 |
@@ -171,15 +170,22 @@ vscode-artic
 
 ## Build Requirements
 
-- CMake
-- Ninja¹ 
-- Clang²
+- CMake >= 3.20
+- A C++20 compiler
+- A CMake generator (Ninja is used by default in `build.sh`)
 - Node.js >= 20 (installed with nvm)
-> ¹ You can also use another generator, but ninja is used by default in the setup script `build.sh`.
 
-> ² gcc is currently unsupported as it isn't compatilble with lsp-framework, other compilers were not tested.
+The following combinations are verified to build the language server on Windows x86_64:
 
-> As, this extension only supports x86_64 Linux, development has only be tested on this platform.
+| Compiler | Generator |
+| -------- | --------- |
+| Clang 19 | Ninja |
+| MSVC 19.43 | Ninja |
+| MSVC 19.43 | Visual Studio 17 2022 |
+| GCC 13.2 (MinGW-w64) | Ninja |
+
+> Older revisions required Clang, because GCC was incompatible with `lsp-framework`.
+> This restriction no longer applies.
 
 ## Checkout the repository
 

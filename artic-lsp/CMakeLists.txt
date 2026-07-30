@@ -43,11 +43,22 @@ target_include_directories(artic-lsp PUBLIC
     $<INSTALL_INTERFACE:include>
 )
 
-target_compile_options(artic-lsp PRIVATE -Wno-deprecated-declarations)
-target_compile_options(libartic PRIVATE -Wno-deprecated-declarations)
-target_compile_definitions(libartic PUBLIC -DENABLE_LSP)
+# libartic's own options/definitions are set by artic/src/CMakeLists.txt,
+# which enables ENABLE_LSP when the artic-lsp target exists.
+if(MSVC)
+    target_compile_options(artic-lsp PRIVATE /wd4996)
+else()
+    target_compile_options(artic-lsp PRIVATE -Wno-deprecated-declarations)
+endif()
 
-set_target_properties(artic-lsp PROPERTIES LINK_FLAGS "-static-libgcc -static-libstdc++")
+# Statically link the GNU runtimes so the binary is portable. Probed rather than
+# hardcoded, since MSVC-ABI toolchains (MSVC, clang-cl, clang --target=*-msvc)
+# link the CRT instead and reject/ignore these flags.
+include(CheckLinkerFlag)
+check_linker_flag(CXX "-static-libgcc;-static-libstdc++" HAVE_STATIC_GNU_RUNTIME)
+if(HAVE_STATIC_GNU_RUNTIME)
+    target_link_options(artic-lsp PRIVATE -static-libgcc -static-libstdc++)
+endif()
 
 target_link_libraries(artic-lsp PUBLIC
     libartic
