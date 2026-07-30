@@ -136,16 +136,29 @@ Ordered. Keep status markers current.
 
 1. **Test harness** — *done*. Dependency-free LSP protocol tests + self-authored fixtures
    in `test/`, plus the artic CTest suite wired up via `include(CTest)`.
-2. **Config diagnostics are unreliable** — *in progress*. Fixed so far: source diagnostics
-   were published under a lowercased path on Windows (`tracked_file()` used the lowercased
-   string as the file's identity), so the editor could not match them to the open document.
-   Still open: `ConfigLog::error("...{}", x)` does not format — the `{}` reaches the user and
-   `x` is silently treated as the search context; `ConfigLog::file_context` is a single
-   mutable field that recursive config includes overwrite without restoring, misattributing
-   messages to the wrong config file; messages with an empty `file_context` are dropped by
-   `publish_config_diagnostics()`; and diagnostics are never cleared for a file that no
-   longer has messages. See `publish_config_diagnostics()` in
-   [artic-lsp/src/server.cpp](artic-lsp/src/server.cpp).
+2. **Config diagnostics are unreliable** — *done, with one follow-up*. Fixed:
+   - Diagnostic URIs were built with `FileUri::fromPath()`, which renders the path with
+     `u8string()` instead of `generic_u8string()`. On **MSVC** that keeps native backslashes,
+     which get percent-encoded as `%5C`, so **no diagnostic ever reached the editor**.
+     MinGW's libstdc++ keeps forward slashes, which is why the fast loop never showed it.
+     Worked around with `to_file_uri()` in [artic-lsp/src/server.cpp](artic-lsp/src/server.cpp);
+     the real bug is upstream in lsp-framework and is worth reporting.
+   - Source diagnostics were published under a lowercased path (`tracked_file()` used the
+     lowercased string as the file's identity).
+   - `.artic-lsp` was never recognised: it is a dotfile, so `path::extension()` is empty and
+     both `get_file_type()` and `instantiate_config()` fell through. Matched on filename now.
+   - Diagnostics were never cleared once a config was fixed; `published_config_diagnostics_`
+     now tracks what was sent and clears it.
+   - `ConfigLog::file_context` was a single mutable field that recursive includes overwrote
+     without restoring. Replaced with the RAII `ConfigLog::scoped_file()`.
+   - `ConfigLog::error("...{}", x)` does not format — the `{}` reached the user and `x` was
+     silently treated as the search context.
+   - Removed the dead `propagate_to_file` branch in `publish_config_diagnostics()`.
+
+   Follow-up: a valid project config always emits an Information-severity message like
+   `+ 1 files | total matches: 1 files:` against its `files` pattern. It is deliberate
+   (an "N files matched" annotation) but it renders as noise in the Problems panel and the
+   wording looks malformed. Decide whether it should be an inlay hint instead.
 3. **Support `.sln` files in the config** — today only `.vcxproj` can be listed; a solution
    should be expandable to its projects. See `instantiate_config()` in
    [artic-lsp/src/workspace.cpp](artic-lsp/src/workspace.cpp) and `parse_vcxproj()` in
@@ -166,3 +179,7 @@ Ordered. Keep status markers current.
 - `libartic` exports `ENABLE_LSP` as a **PUBLIC** compile definition, so it leaks to every
   consumer of the library, including the `artic` executable.
 - Build directories are ignored via `build*/`. Keep scratch builds under that pattern.
+- **Test on more than the fast loop.** The MinGW and MSVC standard libraries disagree about
+  `std::filesystem::path::u8string()` on Windows, which hid a bug that broke diagnostics
+  entirely on MSVC. Run the suite against a second binary with `ARTIC_LSP_BIN` before
+  calling protocol-level work done.

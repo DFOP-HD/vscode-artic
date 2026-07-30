@@ -2,6 +2,7 @@
 #define ARTIC_LS_SERVER_H
 
 #include <memory>
+#include <set>
 #include <string>
 
 #include "workspace.h"
@@ -59,6 +60,10 @@ public:
 
     void reload_workspace(const std::string& active_file = {});
     void publish_config_diagnostics(const workspace::config::ConfigLog& log);
+
+    // Files that currently show config diagnostics, so they can be cleared once
+    // the config is fixed. The editor keeps the last published set otherwise.
+    std::set<std::filesystem::path> published_config_diagnostics_;
 };
 
 } // namespace artic::ls

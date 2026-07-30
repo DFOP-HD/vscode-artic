@@ -28,6 +28,24 @@ struct ConfigLog {
     fs::path file_context;
     std::vector<Message> messages;
 
+    // Restores the previous context on destruction. Config parsing recurses through
+    // includes, so a plain assignment would leave later messages attributed to
+    // whichever config happened to be visited last.
+    struct FileContextScope {
+        FileContextScope(ConfigLog& log, fs::path file)
+            : log_(log), previous_(std::move(log.file_context))
+        {
+            log_.file_context = std::move(file);
+        }
+        FileContextScope(const FileContextScope&) = delete;
+        FileContextScope& operator=(const FileContextScope&) = delete;
+        ~FileContextScope() { log_.file_context = std::move(previous_); }
+    private:
+        ConfigLog& log_;
+        fs::path previous_;
+    };
+    [[nodiscard]] FileContextScope scoped_file(fs::path file) { return FileContextScope(*this, std::move(file)); }
+
     void error(std::string msg, std::string context="") { messages.push_back(make_message(Severity::Error,       std::move(msg), context)); }
     void warn (std::string msg, std::string context="") { messages.push_back(make_message(Severity::Warning,     std::move(msg), context)); }
     void info (std::string msg, std::string context="") { messages.push_back(make_message(Severity::Information, std::move(msg), context)); }
@@ -81,9 +99,10 @@ struct FilePatternParser {
     std::vector<fs::path> results;
 private:
     void expand() {
+        auto original_pattern = pattern;
         expand_home();
         if (!fs::exists(root) || !fs::is_directory(root)) {
-            log.error("Folder does not exist: {}", root.string());
+            log.error("Folder does not exist: " + root.generic_string(), original_pattern);
             return;
         }
         split();

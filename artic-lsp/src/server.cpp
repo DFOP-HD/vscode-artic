@@ -75,14 +75,33 @@ void Server::send_message(const std::string& message, lsp::MessageType type) {
 }
 
 Server::FileType Server::get_file_type(const fs::path& file) {
+    // `.artic-lsp` is a dotfile, so it has no extension as far as std::filesystem
+    // is concerned and has to be matched on the filename instead.
+    if (file.filename() == ".artic-lsp") return FileType::ConfigFile;
     auto ext = file.extension();
-    return ext == ".json" || ext == ".artic-lsp" || ext == ".ninja" || ext == ".vcxproj" ? FileType::ConfigFile : FileType::SourceFile;
+    return ext == ".json" || ext == ".ninja" || ext == ".vcxproj" ? FileType::ConfigFile : FileType::SourceFile;
+}
+
+// lsp-framework's FileUri::fromPath() renders the path with u8string() rather than
+// generic_u8string(). On MSVC that keeps the native backslashes, which then get
+// percent-encoded as %5C and no editor can match the URI to the open document.
+// (MinGW's libstdc++ happens to keep forward slashes, so the bug is invisible there.)
+static lsp::FileUri to_file_uri(const fs::path& path) {
+    auto generic = fs::absolute(path).generic_string();
+#ifdef _WIN32
+    generic.insert(generic.begin(), '/');
+#endif
+    lsp::Uri uri;
+    uri.setScheme("file");
+    uri.setAuthority({});
+    uri.setPath(generic);
+    return lsp::FileUri(uri);
 }
 
 static lsp::Location convert_loc(const Loc& loc){
     if (!loc.file) throw lsp::RequestError(lsp::Error::InternalError, "Cannot convert location with undefined file");
     return lsp::Location {
-        .uri = lsp::FileUri::fromPath(*loc.file),
+        .uri = to_file_uri(*loc.file),
         .range = lsp::Range {
             .start = lsp::Position { static_cast<lsp::uint>(loc.begin.row - 1), static_cast<lsp::uint>(loc.begin.col - 1) },
             .end   = lsp::Position { static_cast<lsp::uint>(loc.end.row   - 1), static_cast<lsp::uint>(loc.end.col   - 1) }
@@ -1251,7 +1270,7 @@ void Server::compile_this_and_related_files(std::filesystem::path file, std::str
 
         message_handler_.sendNotification<notif::TextDocument_PublishDiagnostics>(
             notif::TextDocument_PublishDiagnostics::Params {
-                .uri = lsp::FileUri::fromPath(path),
+                .uri = to_file_uri(file->path),
                 .diagnostics = diagnostics_by_file.contains(path) ? diagnostics_by_file.at(path) : std::vector<lsp::Diagnostic>{}
             }
         );
@@ -1306,86 +1325,73 @@ void Server::publish_config_diagnostics(const workspace::config::ConfigLog& log)
     }
 
     std::unordered_map<std::filesystem::path, std::vector<lsp::Diagnostic>> fileDiags;
-    std::unordered_map<std::filesystem::path, std::vector<lsp::InlayHint>> fileHints;
     Timer _("Publish Config Diagnostics");
+
+    auto find_in_file = [](std::filesystem::path const& file, std::string_view literal) -> std::vector<lsp::Range> {
+        std::vector<lsp::Range> ranges;
+        if(literal.empty()) return ranges;
+        std::ifstream ifs(file);
+        if (!ifs) return ranges;
+
+        std::string line;
+        lsp::uint line_number = 0;
+        while (std::getline(ifs, line)) {
+            size_t pos = line.find(literal);
+            while (pos != std::string::npos) {
+                ranges.push_back(lsp::Range{
+                    lsp::Position{line_number, static_cast<lsp::uint>(pos)},
+                    lsp::Position{line_number, static_cast<lsp::uint>(pos + literal.size())}
+                });
+                pos = line.find(literal, pos + 1);
+            }
+            line_number++;
+        }
+        return ranges;
+    };
+
     // create diagnostics
     for (const auto& msg : log.messages) {
-        if(!fs::exists(msg.file)) {
-            log::info("Config message for non-existent file {}: {}", msg.file.generic_string(), msg.message);
+        if(msg.file.empty() || !fs::exists(msg.file)) {
+            log::info("Dropping config message with no reportable file ({}): {}", msg.file.generic_string(), msg.message);
             continue;
         }
-        std::optional<std::string> propagate_to_file;
-        // Diagnosics for the file itself
-        auto find_in_file = [](std::filesystem::path const& file, std::string_view literal) -> std::vector<lsp::Range> {
-            std::vector<lsp::Range> ranges;
-            if(literal.empty()) return ranges;
-            std::ifstream ifs(file);
-            if (!ifs) return ranges;
-    
-            std::string line;
-            lsp::uint line_number = 0;
-            while (std::getline(ifs, line)) {
-                size_t pos = line.find(literal);
-                while (pos != std::string::npos) {
-                    ranges.push_back(lsp::Range{
-                        lsp::Position{line_number, static_cast<lsp::uint>(pos)},
-                        lsp::Position{line_number, static_cast<lsp::uint>(pos + literal.size())}
-                    });
-                    pos = line.find(literal, pos + 1);
-                }
-                line_number++;
-            }
-            return ranges;
-        };
-        std::vector<lsp::Range> occurrences;
-        std::string file = msg.file.generic_string();
-        auto context = msg.context;
 
-        if(propagate_to_file) {
-            file = *propagate_to_file;
-            context = workspace::config::ConfigLog::Context{.literal="include"};
-        }
+        lsp::Diagnostic diag;
+        diag.message = msg.message;
+        diag.severity = msg.severity;
+        diag.range = lsp::Range{ lsp::Position{0,0}, lsp::Position{0,0} };
 
-        if(msg.context.has_value()) {
-            occurrences = find_in_file(file, msg.context.value().literal);
-        }
+        auto occurrences = msg.context.has_value()
+            ? find_in_file(msg.file, msg.context.value().literal)
+            : std::vector<lsp::Range>{};
 
-        // bool sendDiagnostic = occurrences.empty() || msg.severity != lsp::DiagnosticSeverity::Hint;
-        bool sendDiagnostic = true;
-        if(sendDiagnostic && fs::exists(msg.file)) {
-            lsp::Diagnostic diag;
-            diag.message = msg.message;
-            diag.severity = msg.severity;
-            diag.range = lsp::Range{ lsp::Position{0,0}, lsp::Position{0,0} };
-            
-            for(auto& occ : occurrences) {
-                lsp::Diagnostic pos_diag(diag);
-                pos_diag.range = occ;
-                fileDiags[msg.file].push_back(pos_diag);
-            }
-            if(occurrences.empty()) fileDiags[msg.file].push_back(diag);
-        } else {
-            // lsp::InlayHint hint;
-            
-            // for(auto& occ : occurrences) {
-            //     lsp::InlayHint hint;
-            //     hint.label = msg.message;
-            //     hint.position = occ.start;
-            //     fileHints[msg.file].push_back(hint);
-            // }
+        for(auto& occ : occurrences) {
+            lsp::Diagnostic pos_diag(diag);
+            pos_diag.range = occ;
+            fileDiags[msg.file].push_back(pos_diag);
         }
+        if(occurrences.empty()) fileDiags[msg.file].push_back(diag);
     }
 
-    // Send diagnostics
-    int i = 0;
-    for(auto& [file, diags] : fileDiags) {
-        // log::info("Publishing {}/{} config diagnostics for file {}", ++i, fileDiags.size(), file.generic_string());
+    auto publish = [this](const fs::path& file, std::vector<lsp::Diagnostic> diags) {
         message_handler_.sendNotification<notif::TextDocument_PublishDiagnostics>(
             notif::TextDocument_PublishDiagnostics::Params {
-                .uri = lsp::FileUri::fromPath(file.generic_string()),
-                .diagnostics = diags
+                .uri = to_file_uri(file),
+                .diagnostics = std::move(diags)
             }
         );
+    };
+
+    // Clear files that were reported last time but are clean now, otherwise the editor
+    // keeps displaying diagnostics that no longer exist.
+    for (const auto& file : published_config_diagnostics_) {
+        if (!fileDiags.contains(file)) publish(file, {});
+    }
+
+    published_config_diagnostics_.clear();
+    for(auto& [file, diags] : fileDiags) {
+        published_config_diagnostics_.insert(file);
+        publish(file, diags);
     }
 }
 

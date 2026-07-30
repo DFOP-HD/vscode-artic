@@ -1,6 +1,6 @@
 // Shared helpers: locating the built server and staging fixture workspaces.
 
-import { cpSync, existsSync, mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -71,18 +71,22 @@ export function stageFixture(name) {
     };
 }
 
-/** Builds an empty workspace with the given files. */
+/** Builds an empty workspace with the given files. Keys may contain subdirectories. */
 export function stageFiles(files) {
     const dir = mkdtempSync(join(tmpdir(), 'artic-lsp-adhoc-'));
-    for (const [relPath, content] of Object.entries(files)) {
-        writeFileSync(join(dir, relPath), content);
-    }
+    const put = (relPath, content) => {
+        const target = join(dir, relPath);
+        mkdirSync(dirname(target), { recursive: true });
+        writeFileSync(target, content);
+    };
+    for (const [relPath, content] of Object.entries(files)) put(relPath, content);
     return {
         dir,
         uri: pathToFileURL(dir).href,
         path: (...parts) => join(dir, ...parts),
         fileUri: (...parts) => pathToFileURL(join(dir, ...parts)).href,
-        write: (relPath, content) => writeFileSync(join(dir, relPath), content),
+        read: (...parts) => readFileSync(join(dir, ...parts), 'utf8'),
+        write: put,
         cleanup: () => rmSync(dir, { recursive: true, force: true }),
     };
 }

@@ -1,7 +1,7 @@
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { LspClient } from './lsp-client.mjs';
+import { LspClient, normalizeUri } from './lsp-client.mjs';
 import { findServerBinary, stageFixture } from './helpers.mjs';
 
 describe('source diagnostics', () => {
@@ -33,6 +33,16 @@ describe('source diagnostics', () => {
         assert.equal(diag.range.start.line, 6);
         assert.equal(diag.range.start.character, 8);
         assert.equal(diag.severity, 1, 'must be reported as an error');
+    });
+
+    test('publishes diagnostics under a well-formed file URI', async () => {
+        const uri = ws.fileUri('src', 'type_error.art');
+        const published = await client.waitForDiagnostics(uri);
+        // MSVC builds used to emit native separators encoded as %5C, which no editor
+        // can match against the document it opened.
+        assert.ok(!published.uri.includes('%5C'),
+            `URI must not contain encoded backslashes: ${published.uri}`);
+        assert.equal(normalizeUri(published.uri), normalizeUri(uri));
     });
 
     test('does not attribute a sibling file\'s error to a healthy file', async () => {

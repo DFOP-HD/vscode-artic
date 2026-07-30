@@ -88,7 +88,8 @@ bool ConfigParser::parse() {
             if(!origin.is_optional) log.error("Config file does not exist: \"" + origin.path.generic_string() + "\"", origin.raw_path_string);
             return false;
         }
-        log.file_context = origin.path;
+        // Scoped: on failure the caller keeps reporting against its own config file.
+        auto ctx = log.scoped_file(origin.path);
 
         nlohmann::json j;
         std::ifstream is(origin.path);

@@ -71,25 +71,30 @@ ConfigFile* Workspace::instantiate_config(const ConfigPath& origin, config::Conf
     if(configs_.contains(o.path)) {
         return configs_.at(o.path).get();
     }
+    // `.artic-lsp` is a dotfile and therefore has no extension; match the filename first.
+    if (o.path.filename() == ".artic-lsp") return instantiate_config_json(o, log);
     if (o.path.has_extension()) {
-        if(o.path.extension() == ".json" || o.path.extension() == ".artic-lsp") return instantiate_config_json(o, log);
+        if(o.path.extension() == ".json") return instantiate_config_json(o, log);
         if(o.path.extension() == ".vcxproj") return instantiate_config_vcxproj(o, log);
         if(o.path.extension() == ".ninja") return instantiate_config_ninja(o, log);
     }
 
-    log.error("Unsupported config file extension");
+    // Attribute to the including config if there is one, otherwise to the file itself,
+    // so the message can never end up without a home and get dropped.
+    auto ctx = log.scoped_file(log.file_context.empty() ? o.path : log.file_context);
+    log.error("Unsupported config file type: " + o.path.filename().generic_string(),
+              origin.raw_path_string);
     return nullptr;
 }
 
 ConfigFile* Workspace::instantiate_config_vcxproj(const ConfigPath& origin, config::ConfigLog& log) {
-    log.file_context = origin.path;
+    auto ctx = log.scoped_file(origin.path);
     auto project = config::parse_vcxproj(origin, log);
     if(!project) {
         log.error("Failed to parse vcxproj file");
         return nullptr;
     }
     if(projects_.contains(project->name)) {
-        log.file_context = origin.path;
         log.warn("ignoring duplicate definition of " + project->name + " in " + project->origin.generic_string(), project->name);
         return nullptr;
     }
@@ -110,13 +115,12 @@ ConfigFile* Workspace::instantiate_config_json(const ConfigPath& origin, config:
     bool success = parser.parse();
     if (!success) return nullptr;
 
-    log.file_context = origin.path;
+    auto ctx = log.scoped_file(origin.path);
     // track config
     configs_[origin.path] = arena_->make_ptr<ConfigFile>(parser.config);
     // track projects
     for (const auto& project : parser.projects){
         if(projects_.contains(project.name)) {
-            log.file_context = origin.path;
             log.warn("ignoring duplicate definition of " + project.name + " in " + project.origin.generic_string(), project.name);
             continue;
         }
@@ -126,16 +130,13 @@ ConfigFile* Workspace::instantiate_config_json(const ConfigPath& origin, config:
     // recurse included configs
     for (const auto& include : parser.config.includes) {
         if(fs::exists(include.path)){
-            log.file_context = origin.path;
             auto included_config = instantiate_config(include, log);
             if(!included_config) {
-                log.file_context = origin.path;
-                log.error("Failed to include config" + include.path.generic_string(), include.raw_path_string);
+                log.error("Failed to include config " + include.path.generic_string(), include.raw_path_string);
             }
         } else {
-            log.file_context = origin.path;
             if(include.is_optional) {
-                // log.info("Config file does not exist: \"" + include.path.generic_string() + "\"", include.raw_path_string);
+                // optional includes are allowed to be absent
             } else {
                 log.error("Config file does not exist: \"" + include.path.generic_string() + "\"", include.raw_path_string);
             }
@@ -157,7 +158,7 @@ ConfigFile* Workspace::instantiate_config_json(const ConfigPath& origin, config:
             // Cycle detected!
             auto& parent_project = projects_.at(parent);
 
-            log.file_context = parent_project->origin;
+            auto cycle_ctx = log.scoped_file(parent_project->origin);
             log.error("Circular dependency detected: " + parent + " -> " + project_name + 
                      " creates a cycle. Removing this dependency.", project_name);
             log::info("Circular dependency detected in config '{}': {} -> {}", parent_project->origin.generic_string(), parent, project_name);
@@ -218,7 +219,6 @@ ConfigFile* Workspace::instantiate_config_json(const ConfigPath& origin, config:
     //     if(dep.origin == current_config)
     //         log.info("Declared in this config", dep.name);
     // };
-
     // // log dependency resolution
     // for (auto& [id, p] : projects) {
     //     log.file_context = p.project->origin;
@@ -234,8 +234,6 @@ ConfigFile* Workspace::instantiate_config_json(const ConfigPath& origin, config:
     //         }
     //     }
     // }
-
-    log.file_context = "";
 
     return configs_.at(origin.path).get();
 }
