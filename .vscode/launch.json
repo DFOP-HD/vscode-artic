@@ -6,12 +6,12 @@
 			"request": "launch",
 			"name": "Launch Client",
 			"runtimeExecutable": "${execPath}",
-			"args": ["--extensionDevelopmentPath=${workspaceRoot}"],
+			"args": ["--extensionDevelopmentPath=${workspaceFolder}/vscode"],
 			"outFiles": [
-				"${workspaceRoot}/out/**/*.js",
+				"${workspaceFolder}/vscode/out/**/*.js"
 			],
 			"autoAttachChildProcesses": true,
 			"preLaunchTask": "Build Extension with LSP Server"
-		},
+		}
     ]
 }

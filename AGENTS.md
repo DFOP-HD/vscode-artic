@@ -67,6 +67,18 @@ $env:LIB="$env:LIB;$sdk\Lib\$v\ucrt\x64;$sdk\Lib\$v\um\x64"
 The Visual Studio generator (`-G "Visual Studio 17 2022"`) needs none of this — MSBuild
 locates the SDK itself.
 
+### Debugging the extension (F5)
+
+`Launch Client` in [.vscode/launch.json](.vscode/launch.json) runs the
+`Build Extension with LSP Server` task chain: build the server, `npm install`, `npm run compile`.
+The extension loads `vscode/out/extension.js` and launches `vscode/build/bin/artic-lsp[.exe]`,
+so both must exist before the extension host starts.
+
+Staging the server is done by [vscode/build-lsp.sh](vscode/build-lsp.sh) on Linux/macOS and
+[vscode/build-lsp.ps1](vscode/build-lsp.ps1) on Windows; the latter reuses an existing
+`artic-lsp/build*` tree rather than configuring a new one. Do not let the tasks run the `.sh`
+on Windows — `bash.exe` there is usually the WSL stub, which silently builds Linux binaries.
+
 ## Testing
 
 See [test/README.md](test/README.md) for details.

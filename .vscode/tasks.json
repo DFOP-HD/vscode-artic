@@ -2,25 +2,77 @@
     "version": "2.0.0",
     "tasks": [
         {
+            "label": "npm: install",
+            "type": "shell",
+            "command": "npm install",
+            "options": {
+                "cwd": "${workspaceFolder}/vscode"
+            },
+            "linux": {
+                "command": "source ~/.nvm/nvm.sh && npm install",
+                "options": {
+                    "cwd": "${workspaceFolder}/vscode",
+                    "shell": {
+                        "executable": "/bin/bash",
+                        "args": ["-c"]
+                    }
+                }
+            },
+            "osx": {
+                "command": "source ~/.nvm/nvm.sh && npm install",
+                "options": {
+                    "cwd": "${workspaceFolder}/vscode",
+                    "shell": {
+                        "executable": "/bin/bash",
+                        "args": ["-c"]
+                    }
+                }
+            },
+            "presentation": {
+                "reveal": "silent"
+            },
+            "problemMatcher": []
+        },
+        {
             "label": "npm: compile",
             "type": "shell",
-            "command": "source ~/.nvm/nvm.sh && cd ./vscode/ && npm run compile",
+            "command": "npm run compile",
+            "options": {
+                "cwd": "${workspaceFolder}/vscode"
+            },
+            "linux": {
+                "command": "source ~/.nvm/nvm.sh && npm run compile",
+                "options": {
+                    "cwd": "${workspaceFolder}/vscode",
+                    "shell": {
+                        "executable": "/bin/bash",
+                        "args": ["-c"]
+                    }
+                }
+            },
+            "osx": {
+                "command": "source ~/.nvm/nvm.sh && npm run compile",
+                "options": {
+                    "cwd": "${workspaceFolder}/vscode",
+                    "shell": {
+                        "executable": "/bin/bash",
+                        "args": ["-c"]
+                    }
+                }
+            },
             "group": "build",
             "presentation": {
                 "reveal": "silent"
             },
-            "problemMatcher": "$tsc",
-            "options": {
-                "shell": {
-                    "executable": "/bin/bash",
-                    "args": ["-c"]
-                }
-            }
+            "problemMatcher": "$tsc"
         },
         {
             "label": "Build Artic LSP Server",
             "type": "shell",
             "command": "./vscode/build-lsp.sh",
+            "windows": {
+                "command": "powershell -NoProfile -ExecutionPolicy Bypass -File ./vscode/build-lsp.ps1"
+            },
             "group": "build",
             "options": {
                 "cwd": "${workspaceFolder}"
@@ -40,6 +92,7 @@
             "dependsOrder": "sequence",
             "dependsOn": [
                 "Build Artic LSP Server",
+                "npm: install",
                 "npm: compile"
             ],
             "group": {
