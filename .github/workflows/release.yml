@@ -22,11 +22,12 @@ jobs:
         include:
           - name: linux-x64
             os: ubuntu-latest
-            generator: Ninja
+            generator: -G Ninja
             binary: artic-lsp/build/bin/artic-lsp
+          # No -G: CMake picks the newest Visual Studio on the image. See ci.yml.
           - name: win32-x64
             os: windows-latest
-            generator: Visual Studio 17 2022
+            generator: ''
             binary: artic-lsp/build/bin/Release/artic-lsp.exe
 
     steps:
@@ -39,7 +40,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y ninja-build
 
       - name: Configure
-        run: cmake -S artic-lsp -B artic-lsp/build -G "${{ matrix.generator }}" -D CMAKE_BUILD_TYPE=Release
+        run: cmake -S artic-lsp -B artic-lsp/build ${{ matrix.generator }} -D CMAKE_BUILD_TYPE=Release
 
       - name: Build
         run: cmake --build artic-lsp/build --target artic-lsp --config Release --parallel
@@ -62,7 +63,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
 
       - uses: actions/download-artifact@v4
         with:

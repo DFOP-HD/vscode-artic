@@ -245,10 +245,11 @@ two tests bundle `vscode/src/detect.ts` and `vscode/src/server-path.ts` with esb
 ## Continuous integration
 
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on every push and pull request. It
-builds the server on Linux (Ninja/GCC) and Windows (`Visual Studio 17 2022`), runs both test
-suites and `npm audit` on each, and additionally proves on Linux that the standalone `artic`
-compiler still builds without `ENABLE_LSP` — that check uses the throwaway project in
-[artic-lsp/nolsp](artic-lsp/nolsp), which reuses the dependencies the main build already fetched.
+builds the server on Linux (Ninja/GCC) and Windows (whichever Visual Studio the runner image
+provides), runs both test suites and `npm audit` on each, and additionally proves on Linux that
+the standalone `artic` compiler still builds without `ENABLE_LSP` — that check uses the throwaway
+project in [artic-lsp/nolsp](artic-lsp/nolsp), which reuses the dependencies the main build
+already fetched.
 
 ## Releasing
 

@@ -136,9 +136,18 @@ the editor is Windows.
   does the rest.
 - [.github/workflows/ci.yml](.github/workflows/ci.yml) runs the whole Definition of Done on
   push and PR: build + `ctest` + `node --test` + `npm audit` on Linux (Ninja/GCC) *and*
-  Windows (`Visual Studio 17 2022`), plus the no-`ENABLE_LSP` build on Linux. The two
-  toolchains are the point — the `u8string()` and drive-letter bugs below were both
-  single-toolchain bugs that a one-OS CI would have missed.
+  Windows (whichever Visual Studio the runner image has), plus the no-`ENABLE_LSP` build on
+  Linux. The two toolchains are the point — the `u8string()` and drive-letter bugs below
+  were both single-toolchain bugs that a one-OS CI would have missed.
+- **Do not pin a Visual Studio generator in CI.** `-G "Visual Studio 17 2022"` failed with
+  `could not find any instance of Visual Studio` once the `windows-latest` image moved past
+  VS 2022. The Windows leg passes no `-G` at all, so CMake selects the newest Visual Studio
+  present; MSBuild still finds the Windows SDK by itself. Locally, pinning is fine.
+- **The test step runs under `shell: bash`, with the glob unquoted.** `node --test` only
+  expands glob patterns itself on newer Node, so `node --test "test/*.test.mjs"` failed on
+  the runner with `Could not find '.../test/*.test.mjs'`. Letting bash (Git Bash on the
+  Windows image) expand it removes the Node-version dependency. The paths it produces are
+  relative, so MSYS path translation does not touch them.
 - **`npm ci` must run before `node --test`** in CI: `detect-config.test.mjs` and
   `server-path.test.mjs` bundle TypeScript with the esbuild in `vscode/node_modules`.
 - `half` is fetched from an unpinned SourceForge `files/latest/download` URL — the least

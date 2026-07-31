@@ -20,12 +20,15 @@ jobs:
         include:
           - name: linux
             os: ubuntu-latest
-            generator: Ninja
-          # MSBuild locates the Windows SDK by itself; Ninja with MSVC needs a vcvars
-          # environment, which has been unreliable on this project's machines.
+            # Ninja is not preinstalled on the Ubuntu image.
+            generator: -G Ninja
+          # No -G on Windows: CMake picks the newest Visual Studio present, and MSBuild
+          # locates the Windows SDK by itself. Pinning "Visual Studio 17 2022" broke the
+          # moment the runner image stopped shipping it. Ninja with MSVC is not an option
+          # here because it needs a vcvars environment.
           - name: windows
             os: windows-latest
-            generator: Visual Studio 17 2022
+            generator: ''
 
     steps:
       - uses: actions/checkout@v4
@@ -38,7 +41,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
 
       # thorin, lsp-framework, nlohmann_json and half are downloaded at configure time.
       # half comes from a SourceForge "latest/download" URL, which is the least reliable
@@ -52,7 +55,7 @@ jobs:
           key: deps-${{ matrix.os }}-${{ hashFiles('artic-lsp/cmake/Dependencies.cmake') }}
 
       - name: Configure
-        run: cmake -S artic-lsp -B artic-lsp/build -G "${{ matrix.generator }}" -D CMAKE_BUILD_TYPE=Release
+        run: cmake -S artic-lsp -B artic-lsp/build ${{ matrix.generator }} -D CMAKE_BUILD_TYPE=Release
 
       - name: Build
         run: cmake --build artic-lsp/build --target artic-lsp artic --config Release --parallel
@@ -73,8 +76,11 @@ jobs:
         run: npm audit
 
       # Must run after `npm ci`: two suites bundle TypeScript from vscode/src with esbuild.
+      # bash (Git Bash on the Windows image) expands the glob itself, so this does not
+      # depend on `node --test` supporting glob patterns.
       - name: Language server test suite
-        run: node --test "test/*.test.mjs"
+        shell: bash
+        run: node --test test/*.test.mjs
 
       # The standalone compiler has to keep building without ENABLE_LSP. It reuses the
       # dependencies the main build already fetched, so this is cheap.
