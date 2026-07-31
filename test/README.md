@@ -41,12 +41,14 @@ ctest --test-dir artic-lsp/buildGcc -E "^thorin_"
 | `source-diagnostics.test.mjs` | Diagnostics for `.art` sources: position, URI shape, attribution, clearing. |
 | `config-diagnostics.test.mjs` | Diagnostics for `artic.json` / `.artic-lsp`. |
 | `language-features.test.mjs` | Semantic tokens, inlay hints, go-to-definition, find-references. |
+| `completion.test.mjs` | `textDocument/completion`: field and enum-option projection, and the `detail` of a generic function. |
 | `hover.test.mjs` | `textDocument/hover`: the rendering of every declaration kind, the reported range, and the null cases. |
 | `document-symbols.test.mjs` | `textDocument/documentSymbol`: the outline tree, the symbol kind of each declaration kind, and the two ranges. |
 | `path-identity.test.mjs` | The same features when the file is reached through a `.vcxproj` that spells the path differently from the editor. |
 | `sln-config.test.mjs` | `.sln` files listed in `include`, including the noise a CMake-generated solution brings with it. |
 | `ninja-config.test.mjs` | `build.ninja` files listed in `include`: artic targets become projects, other custom commands are ignored. |
 | `optional-includes.test.mjs` | Includes marked with a trailing `?`: absent is fine, broken is not, and the `?` is not part of the path. |
+| `circular-dependencies.test.mjs` | Cycles between projects are reported once and then broken, so the projects still compile. |
 | `detect-config.test.mjs` | Which build files the "Detect workspace configuration" command writes into `artic.json`. Bundles `vscode/src/detect.ts` with esbuild, so it needs no VS Code instance. |
 | `server-path.test.mjs` | How the extension picks the server binary: the `artic.serverPath` setting, the bundled binary, then `PATH`. Bundles `vscode/src/server-path.ts` with esbuild. |
 | `fixtures.test.mjs` | Compiles the fixtures with the real `artic` binary. |
@@ -69,6 +71,15 @@ otherwise the server legitimately answers `null` and the test proves nothing.
 
 Do not hard-code line/column numbers. Use `locate(text, 'fn dot')`, which keeps a
 test readable and stops it rotting when a fixture gains a comment line.
+
+The server keeps **one project registry per session** and ignores a duplicate
+project name with a warning. Tests in the same suite that stage different
+workspaces must therefore use distinct project names, or the second workspace's
+projects silently do not exist.
+
+A config diagnostic is published at **every** textual occurrence of its context
+string in the file, so one logical error can produce several diagnostics. Compare
+distinct messages rather than counting entries.
 
 ## Fixture rules
 

@@ -1,8 +1,11 @@
 #include "server.h"
 
+#include "ast_render.h"
 #include "compile.h"
 #include "config.h"
 #include "crash.h"
+#include "lsp_convert.h"
+#include "paths.h"
 #include "workspace.h"
 #include "artic/log.h"
 #include "artic/ast.h"
@@ -32,6 +35,27 @@ namespace notif = lsp::notifications;
 namespace fs = std::filesystem;
 
 namespace artic::ls {
+namespace {
+
+fs::path absolute_path(std::string_view path) {
+    return paths::canonical_path(fs::path(path));
+}
+
+void log_request(std::string_view name, const lsp::TextDocumentIdentifier& doc) {
+    log::info("\n[LSP] <<< {} {}", name, doc.uri.path());
+}
+
+void log_request(std::string_view name, const lsp::TextDocumentIdentifier& doc, const lsp::Position& pos) {
+    log::info("\n[LSP] <<< {} {}:{}:{}", name, doc.uri.path(), pos.line + 1, pos.character + 1);
+}
+
+void log_request(std::string_view name, const lsp::TextDocumentIdentifier& doc, const lsp::Range& range) {
+    log::info("\n[LSP] <<< {} {}:{}:{} to {}:{}", name, doc.uri.path(),
+              range.start.line + 1, range.start.character + 1,
+              range.end.line + 1, range.end.character + 1);
+}
+
+} // anonymous namespace
 
 // Server ---------------------------------------------------------------------
 
@@ -51,7 +75,6 @@ int Server::run() {
     while (running_) {
         try {
             message_handler_.processIncomingMessages();
-            // std::this_thread::sleep_for(std::chrono::milliseconds(10));
         } catch (const lsp::RequestError& e) {
             log::info("LSP Message processing error: {}", e.what());
         } catch (const std::runtime_error& e) {
@@ -83,53 +106,6 @@ Server::FileType Server::get_file_type(const fs::path& file) {
         ? FileType::ConfigFile : FileType::SourceFile;
 }
 
-// lsp-framework's FileUri::fromPath() renders the path with u8string() rather than
-// generic_u8string(). On MSVC that keeps the native backslashes, which then get
-// percent-encoded as %5C and no editor can match the URI to the open document.
-// (MinGW's libstdc++ happens to keep forward slashes, so the bug is invisible there.)
-static lsp::FileUri to_file_uri(const fs::path& path) {
-    auto generic = fs::absolute(path).generic_string();
-#ifdef _WIN32
-    generic.insert(generic.begin(), '/');
-#endif
-    lsp::Uri uri;
-    uri.setScheme("file");
-    uri.setAuthority({});
-    uri.setPath(generic);
-    return lsp::FileUri(uri);
-}
-
-static lsp::Location convert_loc(const Loc& loc){
-    if (!loc.file) throw lsp::RequestError(lsp::Error::InternalError, "Cannot convert location with undefined file");
-    return lsp::Location {
-        .uri = to_file_uri(*loc.file),
-        .range = lsp::Range {
-            .start = lsp::Position { static_cast<lsp::uint>(loc.begin.row - 1), static_cast<lsp::uint>(loc.begin.col - 1) },
-            .end   = lsp::Position { static_cast<lsp::uint>(loc.end.row   - 1), static_cast<lsp::uint>(loc.end.col   - 1) }
-        }
-    };
-}
-
-static fs::path absolute_path(std::string_view path) {
-    return workspace::canonical_path(fs::path(path));
-}
-
-static Loc convert_loc(const lsp::TextDocumentIdentifier& file, const lsp::Position& pos) {
-    return Loc(
-        std::make_shared<std::string>(absolute_path(file.uri.path()).generic_string()),
-        Loc::Pos { .row = static_cast<int>(pos.line + 1), .col = static_cast<int>(pos.character + 1) }
-    );
-}
-
-static Loc convert_loc(const lsp::TextDocumentIdentifier& file, const lsp::Range& pos) {
-    return Loc(
-        std::make_shared<std::string>(absolute_path(file.uri.path()).generic_string()),
-        Loc::Pos { .row = static_cast<int>(pos.start.line + 1), .col = static_cast<int>(pos.start.character + 1) },
-        Loc::Pos { .row = static_cast<int>(pos.end.line + 1),   .col = static_cast<int>(pos.end.character + 1) }
-    );
-}
-
-
 // -----------------------------------------------------------------------------
 //
 //
@@ -139,30 +115,31 @@ static Loc convert_loc(const lsp::TextDocumentIdentifier& file, const lsp::Range
 // -----------------------------------------------------------------------------
 
 
+namespace {
+
 struct InitOptions {
     bool restart_from_crash = false;
 };
 
-InitOptions parse_initialize_options(const reqst::Initialize::Params& params, Server& server) {
+InitOptions parse_initialize_options(const reqst::Initialize::Params& params) {
     InitOptions data;
 
     if (auto init = params.initializationOptions; init.has_value() && init->isObject()) {
         const auto& obj = init->object();
-        
+
         if (auto val = obj.find("restartFromCrash"); val && val->isBoolean())
             data.restart_from_crash = val->boolean();
     }
-    // server.send_message("No initialization options provided in initialize request", lsp::MessageType::Error);
-    // workspace_root = std::string(params.rootUri.value().path());
     return data;
 }
 
+} // anonymous namespace
+
 void Server::setup_events_initialization() {
     message_handler_.add<reqst::Initialize>([this](reqst::Initialize::Params&& params) -> reqst::Initialize::Result {
-        Timer _("Initialize");
         log::info( "\n[LSP] <<< Initialize");
         
-        InitOptions init_data = parse_initialize_options(params, *this);
+        InitOptions init_data = parse_initialize_options(params);
 
         safe_mode_ = init_data.restart_from_crash;
         workspace_ = std::make_unique<workspace::Workspace>();
@@ -265,9 +242,6 @@ void Server::setup_events_modifications() {
             // handled in didsave
             return;
         }
-        // Clear the last compilation result to invalidate stale inlay hints
-        // compile.reset();
-        // workspace_->mark_file_dirty(file);
 
         auto& content = std::get<lsp::TextDocumentContentChangeEvent_Text>(params.contentChanges[0]).text;
         compile_this_and_related_files(file, &content);
@@ -327,6 +301,8 @@ struct SemanticToken {
     uint32_t modifiers;
 };
 
+namespace {
+
 SemanticToken create_semantic_token(const Loc& loc, const ast::NamedDecl& decl, bool is_decl) {
     SemanticToken token {
         .line =   (uint32_t) loc.begin.row - 1,
@@ -385,7 +361,7 @@ SemanticToken create_semantic_token(const Loc& loc, const ast::NamedDecl& decl, 
 }
 
 // Collect semantic tokens from the NameMap by iterating over declarations and references
-lsp::SemanticTokens collect(
+lsp::SemanticTokens collect_semantic_tokens(
     const ls::NameMap& name_map, 
     const std::string& file, 
     int start_row = 0, 
@@ -418,7 +394,7 @@ lsp::SemanticTokens collect(
 
     // Encode
     std::vector<uint32_t> data;
-    data.reserve(tokens.size() * sizeof(SemanticToken) / sizeof(uint32_t));
+    data.reserve(tokens.size() * 5);
     uint32_t prev_line = 0;
     uint32_t prev_start = 0;
     
@@ -442,33 +418,27 @@ lsp::SemanticTokens collect(
     };
 }
 
+} // anonymous namespace
+
 void Server::setup_events_tokens() {
     // Semantic Tokens ----------------------------------------------------------------------
     message_handler_.add<reqst::TextDocument_SemanticTokens_Full>([this](lsp::SemanticTokensParams&& params) -> reqst::TextDocument_SemanticTokens_Full::Result {
-        Timer _("TextDocument_SemanticTokens_Full");
         auto file = absolute_path(params.textDocument.uri.path());
-        log::info("\n[LSP] <<< TextDocument SemanticTokens_Full {}", file);
+        log_request("TextDocument SemanticTokens_Full", params.textDocument);
         
-        // semantic tokens are not allowed to trigger recompile as this is called right after document changed
-        bool already_compiled = compile && compile->locator.data(file.generic_string());
-        if(!already_compiled) return nullptr;
-        auto tokens = collect(compile->name_map, file.generic_string());
+        if(!has_compiled(file)) return nullptr;
+        auto tokens = collect_semantic_tokens(compile->name_map, file.generic_string());
         
         log::info("[LSP] >>> Returning {} semantic tokens", tokens.data.size());
         return tokens;
     });
 
     message_handler_.add<reqst::TextDocument_SemanticTokens_Range>([this](lsp::SemanticTokensRangeParams&& params) -> reqst::TextDocument_SemanticTokens_Range::Result {
-        Timer _("TextDocument_SemanticTokens_Range");
         auto file = absolute_path(params.textDocument.uri.path());
-        log::info("\n[LSP] <<< TextDocument SemanticTokens_Range {}:{}:{} to {}:{}", 
-                 file.generic_string(),
-                 params.range.start.line + 1, params.range.start.character + 1,
-                 params.range.end.line + 1, params.range.end.character + 1);
-        // semantic tokens are not allowed to trigger recompile as this is called right after document changed
-        bool already_compiled = compile && compile->locator.data(file.generic_string());
-        if(!already_compiled) return nullptr;
-        auto tokens = collect(
+        log_request("TextDocument SemanticTokens_Range", params.textDocument, params.range);
+
+        if(!has_compiled(file)) return nullptr;
+        auto tokens = collect_semantic_tokens(
             compile->name_map, file.generic_string(), 
             params.range.start.line + 1, 
             params.range.end.line + 1);
@@ -487,7 +457,9 @@ void Server::setup_events_tokens() {
 //
 // -----------------------------------------------------------------------------
 
-struct IndentifierOccurences{
+namespace {
+
+struct IdentifierOccurrences {
     std::string name;
     std::vector<lsp::Location> all_occurences;
 
@@ -496,95 +468,9 @@ struct IndentifierOccurences{
     lsp::Location declaration_range;
 };
 
-/// Renders a declaration the way it is written in source, but without its body.
-static std::string render_decl(const ast::NamedDecl& decl) {
-    std::ostringstream oss;
-    log::Output output(oss, false);
-    Printer printer(output);
-
-    auto print = [&](const ast::Node* node) { if (node) node->print(printer); };
-    auto print_declared_type = [&](const ast::Type* declared) {
-        if (declared) declared->print(printer);
-        else if (decl.type) decl.type->print(printer);
-        else oss << '?';
-    };
-
-    if (auto fn_decl = decl.isa<ast::FnDecl>()) {
-        const auto& fn = *fn_decl->fn;
-        oss << "fn " << decl.id.name;
-        print(fn_decl->type_params.get());
-        if (fn.param) {
-            // A tuple pattern brings its own parentheses, a single parameter does not.
-            if (!fn.param->is_tuple()) oss << '(';
-            fn.param->print(printer);
-            if (!fn.param->is_tuple()) oss << ')';
-        }
-        if (fn.ret_type) {
-            oss << " -> ";
-            fn.ret_type->print(printer);
-        } else if (auto fn_type = decl.type ? decl.type->isa<artic::FnType>() : nullptr) {
-            oss << " -> ";
-            fn_type->codom->print(printer);
-        }
-    } else if (auto struct_decl = decl.isa<ast::StructDecl>()) {
-        oss << "struct " << decl.id.name;
-        print(struct_decl->type_params.get());
-    } else if (auto enum_decl = decl.isa<ast::EnumDecl>()) {
-        oss << "enum " << decl.id.name;
-        print(enum_decl->type_params.get());
-    } else if (auto option_decl = decl.isa<ast::OptionDecl>()) {
-        if (option_decl->parent) oss << option_decl->parent->id.name << "::";
-        oss << decl.id.name;
-        if (option_decl->param) {
-            oss << '(';
-            option_decl->param->print(printer);
-            oss << ')';
-        }
-    } else if (auto type_decl = decl.isa<ast::TypeDecl>()) {
-        oss << "type " << decl.id.name;
-        print(type_decl->type_params.get());
-        oss << " = ";
-        print(type_decl->aliased_type.get());
-    } else if (auto static_decl = decl.isa<ast::StaticDecl>()) {
-        oss << "static ";
-        if (static_decl->is_mut) oss << "mut ";
-        oss << decl.id.name << ": ";
-        print_declared_type(static_decl->type.get());
-    } else if (auto field_decl = decl.isa<ast::FieldDecl>()) {
-        oss << decl.id.name << ": ";
-        print_declared_type(field_decl->type.get());
-    } else if (auto ptrn_decl = decl.isa<ast::PtrnDecl>()) {
-        if (ptrn_decl->is_mut) oss << "mut ";
-        oss << decl.id.name << ": ";
-        print_declared_type(nullptr);
-    } else if (decl.isa<ast::ModDecl>()) {
-        oss << "mod " << decl.id.name;
-    } else if (decl.isa<ast::TypeParam>()) {
-        oss << "type " << decl.id.name;
-    } else {
-        oss << decl.id.name;
-        if (decl.type) {
-            oss << ": ";
-            decl.type->print(printer);
-        }
-    }
-
-    return oss.str();
-}
-
-/// Prints an AST or type node the way the source spells it.
-template <typename T>
-static std::string print_to_string(const T& node) {
-    std::ostringstream oss;
-    log::Output output(oss, false);
-    Printer printer(output);
-    node.print(printer);
-    return oss.str();
-}
-
 /// The outline kind of a declaration, or nothing for declarations that do not belong in
 /// the outline at all (`let`, `use`, and anything the parser could not make sense of).
-static std::optional<lsp::SymbolKind> symbol_kind_of(const ast::Decl& decl) {
+std::optional<lsp::SymbolKind> symbol_kind_of(const ast::Decl& decl) {
     if (decl.isa<ast::ModDecl>())      return lsp::SymbolKind::Module;
     if (decl.isa<ast::FnDecl>())       return lsp::SymbolKind::Function;
     if (decl.isa<ast::StructDecl>())   return lsp::SymbolKind::Struct;
@@ -599,13 +485,13 @@ static std::optional<lsp::SymbolKind> symbol_kind_of(const ast::Decl& decl) {
 }
 
 template <typename Decls>
-static void collect_document_symbols(
+void collect_document_symbols(
     const Decls& decls,
     const std::string& file,
     lsp::Array<lsp::DocumentSymbol>& out);
 
 /// Turns one declaration into an outline entry, recursing into whatever it contains.
-static std::optional<lsp::DocumentSymbol> make_document_symbol(const ast::Decl& decl, const std::string& file) {
+std::optional<lsp::DocumentSymbol> make_document_symbol(const ast::Decl& decl, const std::string& file) {
     // A project spans several files, but the outline only ever describes the one asked for.
     if (!decl.loc.file || *decl.loc.file != file) return std::nullopt;
     auto kind = symbol_kind_of(decl);
@@ -613,11 +499,11 @@ static std::optional<lsp::DocumentSymbol> make_document_symbol(const ast::Decl& 
 
     lsp::DocumentSymbol symbol;
     symbol.kind = lsp::SymbolKindEnum(*kind);
-    symbol.range = convert_loc(decl.loc).range;
+    symbol.range = to_range(decl.loc);
 
     if (auto named = decl.isa<ast::NamedDecl>()) {
         symbol.name = named->id.name;
-        symbol.selectionRange = convert_loc(named->id.loc).range;
+        symbol.selectionRange = to_range(named->id.loc);
         symbol.detail = render_decl(*named);
     } else {
         // `implicit` declarations carry no identifier — the summoner picks them by type.
@@ -645,7 +531,7 @@ static std::optional<lsp::DocumentSymbol> make_document_symbol(const ast::Decl& 
 }
 
 template <typename Decls>
-static void collect_document_symbols(
+void collect_document_symbols(
     const Decls& decls,
     const std::string& file,
     lsp::Array<lsp::DocumentSymbol>& out)
@@ -656,11 +542,7 @@ static void collect_document_symbols(
     }
 }
 
-std::optional<IndentifierOccurences> find_occurrences_of_identifier(Server& server, const Loc& cursor, bool include_declaration) {
-    if(Server::get_file_type(*cursor.file) != Server::FileType::SourceFile) return std::nullopt;
-    server.ensure_compile(*cursor.file);
-    auto& name_map = server.compile->name_map;
-
+std::optional<IdentifierOccurrences> find_occurrences_of_identifier(const ls::NameMap& name_map, const Loc& cursor, bool include_declaration) {
     Loc cursor_range;
     const ast::NamedDecl* target_decl = name_map.find_decl_at(cursor);
     if(target_decl) {
@@ -671,7 +553,7 @@ std::optional<IndentifierOccurences> find_occurrences_of_identifier(Server& serv
             auto id = name_map.get_identifier(*ref);
             cursor_range = id.loc;
             target_decl = name_map.find_decl(*ref);
-            log::info("found reference at cursor '{}'", target_decl->id.name);
+            if(target_decl) log::info("found reference at cursor '{}'", target_decl->id.name);
         }
     }
     // No symbol at cursor position
@@ -681,29 +563,30 @@ std::optional<IndentifierOccurences> find_occurrences_of_identifier(Server& serv
 
     // Include the declaration itself if requested
     if (include_declaration) {
-        locations.push_back(convert_loc(target_decl->id.loc));
+        locations.push_back(to_location(target_decl->id.loc));
     }
 
     // Find all references to this declaration
     for (auto ref : name_map.find_refs(target_decl)) {
-        locations.push_back(convert_loc(name_map.get_identifier(ref).loc));
+        locations.push_back(to_location(name_map.get_identifier(ref).loc));
     }
 
-    return IndentifierOccurences {
+    return IdentifierOccurrences {
         .name = target_decl->id.name,
         .all_occurences = std::move(locations),
-        .cursor_range = convert_loc(cursor_range),
-        .declaration_range = convert_loc(target_decl->id.loc),
+        .cursor_range = to_location(cursor_range),
+        .declaration_range = to_location(target_decl->id.loc),
     };
 }
 
+} // anonymous namespace
+
 void Server::setup_events_definitions() {
     message_handler_.add<reqst::TextDocument_Hover>([this](reqst::TextDocument_Hover::Params&& params) -> reqst::TextDocument_Hover::Result {
-        Timer _("TextDocument_Hover");
-        log::info("\n[LSP] <<< TextDocument Hover {}:{}:{}", params.textDocument.uri.path(), params.position.line + 1, params.position.character + 1);
+        log_request("TextDocument Hover", params.textDocument, params.position);
 
         if(get_file_type(params.textDocument.uri.path()) != FileType::SourceFile) return nullptr;
-        auto cursor = convert_loc(params.textDocument, params.position);
+        auto cursor = to_loc(params.textDocument, params.position);
         ensure_compile(params.textDocument.uri.path());
         auto& name_map = compile->name_map;
 
@@ -729,13 +612,12 @@ void Server::setup_events_definitions() {
                 .kind = lsp::MarkupKindEnum(lsp::MarkupKind::Markdown),
                 .value = "```artic\n" + signature + "\n```"
             },
-            .range = convert_loc(range).range
+            .range = to_range(range)
         };
     });
 
     message_handler_.add<reqst::TextDocument_DocumentSymbol>([this](reqst::TextDocument_DocumentSymbol::Params&& params) -> reqst::TextDocument_DocumentSymbol::Result {
-        Timer _("TextDocument_DocumentSymbol");
-        log::info("\n[LSP] <<< TextDocument DocumentSymbol {}", params.textDocument.uri.path());
+        log_request("TextDocument DocumentSymbol", params.textDocument);
 
         if (get_file_type(params.textDocument.uri.path()) != FileType::SourceFile) return nullptr;
         auto file = absolute_path(params.textDocument.uri.path()).generic_string();
@@ -749,10 +631,9 @@ void Server::setup_events_definitions() {
     });
 
     message_handler_.add<reqst::TextDocument_Definition>([this](lsp::TextDocumentPositionParams&& pos) -> reqst::TextDocument_Definition::Result {
-        Timer _("TextDocument_Definition");
-        log::info("\n[LSP] <<< TextDocument Definition {}:{}:{}", pos.textDocument.uri.path(), pos.position.line + 1, pos.position.character + 1);
+        log_request("TextDocument Definition", pos.textDocument, pos.position);
 
-        auto cursor = convert_loc(pos.textDocument, pos.position);
+        auto cursor = to_loc(pos.textDocument, pos.position);
 
         if(get_file_type(pos.textDocument.uri.path()) != FileType::SourceFile) return nullptr;
         ensure_compile(pos.textDocument.uri.path());
@@ -761,14 +642,14 @@ void Server::setup_events_definitions() {
         // When on a reference try find declaration
         if(auto ref = name_map.find_ref_at(cursor)) {
             if(auto def = name_map.find_decl(*ref)) {
-                auto loc = convert_loc(def->id.loc);
+                auto loc = to_location(def->id.loc);
                 log::info("[LSP] >>> return TextDocument Definition {}:{}:{}", loc.uri.path(), loc.range.start.line + 1, loc.range.start.character + 1);
                 return { loc };
             }
             return nullptr;
         }
         // When on a declaration try find references
-        if(auto occurences = find_occurrences_of_identifier(*this, cursor, false)){
+        if(auto occurences = find_occurrences_of_identifier(name_map, cursor, false)){
             log::info("[LSP] >>> Found {} occurrences of identifier", occurences->all_occurences.size());
             if(occurences->all_occurences.empty()) return { occurences->declaration_range };
             return occurences->all_occurences;
@@ -780,23 +661,24 @@ void Server::setup_events_definitions() {
     });
 
     message_handler_.add<reqst::TextDocument_References>([this](lsp::ReferenceParams&& params) -> reqst::TextDocument_References::Result {
-        Timer _("TextDocument_References");
-        log::info("\n[LSP] <<< TextDocument References {}:{}:{}", params.textDocument.uri.path(), params.position.line + 1, params.position.character + 1);
+        log_request("TextDocument References", params.textDocument, params.position);
 
-        auto cursor = convert_loc(params.textDocument, params.position);
-        auto occurences = find_occurrences_of_identifier(*this, cursor, true);
+        if(get_file_type(params.textDocument.uri.path()) != FileType::SourceFile) return {};
+        ensure_compile(params.textDocument.uri.path());
+        auto cursor = to_loc(params.textDocument, params.position);
+        auto occurences = find_occurrences_of_identifier(compile->name_map, cursor, true);
         if(!occurences) return {};
         log::info("[LSP] >>> Found {} occurrences of identifier", occurences->all_occurences.size());
         return occurences->all_occurences;
     });
 
     message_handler_.add<reqst::TextDocument_PrepareRename>([this](lsp::TextDocumentPositionParams&& params) -> reqst::TextDocument_PrepareRename::Result {
-        Timer _("TextDocument_PrepareRename");
-        log::info("\n[LSP] <<< TextDocument PrepareRename {}:{}:{}", 
-                params.textDocument.uri.path(), params.position.line + 1, params.position.character + 1);
+        log_request("TextDocument PrepareRename", params.textDocument, params.position);
 
-        auto cursor = convert_loc(params.textDocument, params.position);
-        auto occurences = find_occurrences_of_identifier(*this, cursor, true);
+        if(get_file_type(params.textDocument.uri.path()) != FileType::SourceFile) return nullptr;
+        ensure_compile(params.textDocument.uri.path());
+        auto cursor = to_loc(params.textDocument, params.position);
+        auto occurences = find_occurrences_of_identifier(compile->name_map, cursor, true);
         if(!occurences) {
             log::info("[LSP] >>> PrepareRename found no symbol at cursor");
             return nullptr;
@@ -812,12 +694,12 @@ void Server::setup_events_definitions() {
     });
 
     message_handler_.add<reqst::TextDocument_Rename>([this](lsp::RenameParams&& params) -> reqst::TextDocument_Rename::Result {
-        Timer _("TextDocument_Rename");
-        log::info("\n[LSP] <<< TextDocument Rename {}:{}:{} -> '{}'", 
-                 params.textDocument.uri.path(), params.position.line + 1, params.position.character + 1, params.newName);
+        log_request("TextDocument Rename", params.textDocument, params.position);
 
-        auto cursor = convert_loc(params.textDocument, params.position);
-        auto occurences = find_occurrences_of_identifier(*this, cursor, true);
+        if(get_file_type(params.textDocument.uri.path()) != FileType::SourceFile) return nullptr;
+        ensure_compile(params.textDocument.uri.path());
+        auto cursor = to_loc(params.textDocument, params.position);
+        auto occurences = find_occurrences_of_identifier(compile->name_map, cursor, true);
         if(!occurences) {
             log::info("[LSP] >>> Rename found no symbol at cursor");
             return nullptr;
@@ -854,26 +736,7 @@ void Server::setup_events_definitions() {
 
 
 // Completion Helper Functions
-std::string get_completion_detail(const ast::NamedDecl* decl) {
-    if (auto fn_decl = decl->isa<ast::FnDecl>()) {
-        return "function";
-    } else if (auto static_decl = decl->isa<ast::StaticDecl>()) {
-        return static_decl->is_mut ? "let mut" : "let";
-    } else if (auto ptrn_decl = decl->isa<ast::PtrnDecl>()) {
-        return ptrn_decl->is_mut ? "parameter mut" : "parameter";
-    } else if (auto struct_decl = decl->isa<ast::StructDecl>()) {
-        return "struct";
-    } else if (auto enum_decl = decl->isa<ast::EnumDecl>()) {
-        return "enum";
-    } else if (auto type_decl = decl->isa<ast::TypeDecl>()) {
-        return "type";
-    } else if (auto field_decl = decl->isa<ast::FieldDecl>()) {
-        return "field";
-    } else if (auto mod_decl = decl->isa<ast::ModDecl>()) {
-        return "module";
-    }
-    return "declaration";
-}
+namespace {
 
 lsp::CompletionItemKind get_completion_kind(const ast::NamedDecl* decl) {
     if (decl->isa<ast::FnDecl>()) return lsp::CompletionItemKind::Function;
@@ -902,22 +765,14 @@ lsp::CompletionItem completion_item(const ast::FnDecl* fn) {
     label << fn->id.name;
 
     if (fn->type_params) fn->type_params->print(l);
-    if (auto* param = fn->fn->param.get()) {
-        if (param->is_tuple()) {
-            param->print(l);
-        } else {
-            l << '(';
-            param->print(l);
-            l << ')';
-        }
-    }
+    if (auto* param = fn->fn->param.get()) print_param_list(l, *param);
     
     item.label = lb.str();
     lb.str("");
 
     if(const auto* type = fn->type) {
-        if(const auto* forall = fn->type->isa<ForallType>()) type = forall->body;
-        if(type) if(const auto* f = fn->type->isa<FnType>()) {
+        if(const auto* forall = type->isa<ForallType>()) type = forall->body;
+        if(type) if(const auto* f = type->isa<FnType>()) {
             f->codom->print(l);
             item.detail = lb.str();
         }
@@ -927,41 +782,7 @@ lsp::CompletionItem completion_item(const ast::FnDecl* fn) {
         item.detail = lb.str();
     }
 
-    std::stringbuf pt; 
-    std::ostream str1(&pt);
-    log::Output ptrn(str1, false);
-    Printer p(ptrn);
-    int arg = 1;
-    ptrn << fn->id.name;
-    // if(fn->type_params && !fn->type_params->params.empty()) {
-    //     ptrn << "[";
-    //     for(int i = 0; i < fn->type_params->params.size(); i++) {
-    //         if(i > 0) ptrn << ", ";
-    //         ptrn << "${" << arg++ << ":" ;
-    //         fn->type_params->params[i]->print(p);
-    //         ptrn << "}";
-    //     }
-    //     ptrn << "]";
-    // }
-    // if(fn->fn->param){
-    //     ptrn << "(";
-    //     if(fn->fn->param->is_tuple()){
-    //         auto tuple = fn->fn->param->isa<ast::TuplePtrn>();
-    //         for(int i = 0; i < tuple->args.size(); i++) {
-    //             if(i > 0) ptrn << ", ";
-    //             ptrn << "${" << arg++ << ":" ;
-    //             tuple->args[i]->print(p);
-    //             ptrn << "}";
-    //         }
-    //     } else {
-    //         ptrn << "${" << arg++ << ":" ;
-    //         fn->fn->param->print(p);
-    //         ptrn << "}";
-    //     }
-    //     ptrn << ")";
-    // }
-    // ptrn << "$0";
-    item.insertText = pt.str();
+    item.insertText = fn->id.name;
     return item;
 }
 
@@ -973,7 +794,6 @@ std::optional<lsp::CompletionItem> completion_item(const ast::NamedDecl& decl) {
 
     lsp::CompletionItem item;
 
-    // item.detail = get_completion_detail(&decl);
     item.kind = get_completion_kind(&decl);
 
     if(decl.type) {
@@ -985,13 +805,7 @@ std::optional<lsp::CompletionItem> completion_item(const ast::NamedDecl& decl) {
             log::Output label(str0, false);
             Printer l(label);
             label << decl.id.name;
-            if (fn->dom && fn->dom->isa<TupleType>()) {
-                fn->dom->print(l);
-            } else {
-                l << '(';
-                fn->dom->print(l);
-                l << ')';
-            }
+            if (fn->dom) print_param_list(l, *fn->dom);
             item.label = lb.str();
             if(fn->codom) {
                 lb.str("");
@@ -1008,7 +822,7 @@ std::optional<lsp::CompletionItem> completion_item(const ast::NamedDecl& decl) {
             
             if(fn->dom) {
                 if(const auto* tuple = fn->dom->isa<TupleType>()) {
-                    for(int i = 0; i < tuple->args.size(); i++) {
+                    for(size_t i = 0; i < tuple->args.size(); i++) {
                         if(i > 0) ptrn << ", ";
                         ptrn << "${" << arg++ << ":" ;
                         tuple->args[i]->print(p);
@@ -1031,25 +845,19 @@ std::optional<lsp::CompletionItem> completion_item(const ast::NamedDecl& decl) {
     }
 
     if (!item.detail && decl.type) {
-        std::stringbuf lb; 
-        std::ostream str0(&lb);
-        log::Output label(str0, false);
-        Printer l(label);
-        decl.type->print(l);
-        item.detail = lb.str();
+        item.detail = print_to_string(*decl.type);
     }
     return item;
 }
 
+} // anonymous namespace
+
 void Server::setup_events_completion() {
     message_handler_.add<reqst::TextDocument_Completion>([this](lsp::CompletionParams&& params) -> reqst::TextDocument_Completion::Result {
-        log::info("[LSP] <<< TextDocument Completion {}:{}:{}", params.textDocument.uri.path(), params.position.line + 1, params.position.character + 1);
+        log_request("TextDocument Completion", params.textDocument, params.position);
         if(get_file_type(params.textDocument.uri.path()) != FileType::SourceFile) return nullptr;
         ensure_compile(params.textDocument.uri.path());
-        // params.position.character--;
-        Loc cursor = convert_loc(params.textDocument, params.position);
-        // const ast::ProjExpr* proj_expr = nullptr;
-        // const ast::PathExpr* path_expr = nullptr;
+        Loc cursor = to_loc(params.textDocument, params.position);
         const ast::ModDecl* current_module = compile->program.get();
         std::vector<const ast::Node*> local_scopes;
         const ast::Node* outer_node = nullptr;
@@ -1057,7 +865,6 @@ void Server::setup_events_completion() {
         bool only_show_types = false;
         bool inside_block_expr = false;
         bool top_level = false;
-        static constexpr bool debug_print = false;
 
         auto is_type_decl = [](const ast::NamedDecl& decl) -> bool {
             return decl.isa<ast::CtorDecl>() || decl.isa<ast::ModDecl>() || decl.isa<ast::TypeParam>() || decl.isa<ast::TypeDecl>() || decl.isa<ast::UseDecl>();
@@ -1072,7 +879,6 @@ void Server::setup_events_completion() {
         ast::Node::TraverseFn traverse([&](const ast::Node& node) -> bool {
             if(!node.loc.file) return true; // super module
             if(!same_file(cursor, node.loc)) return false;
-            if constexpr (debug_print) log::info("test node at {} vs {}", node.loc, cursor);
             if(!overlaps(cursor, node.loc)) {
                 return false;
             } else if(!outer_node) {
@@ -1094,7 +900,6 @@ void Server::setup_events_completion() {
             }
             inner_node = &node;
 
-            if constexpr (debug_print) log::info("Node at {}", node.loc);
             return true;
         });
         
@@ -1103,19 +908,6 @@ void Server::setup_events_completion() {
             log::info("Error with completion: current_module is null");
             return result;
         }
-
-        // log::Output out(std::clog, false);
-        // Printer p(out);
-        // p.print_additional_node_info = true;
-        // if(outer_node) {
-        //     log::info("\n-- Current Module");
-        //     current_module->print(p);
-        // }
-
-        // if(inner_node) {
-        //     log::info("\n-- Inner Node");
-        //     inner_node->print(p);
-        // }
 
         // ---
         // One possible modifier `only_show_types` if inside typed expression `a : type`
@@ -1133,7 +925,6 @@ void Server::setup_events_completion() {
             // 1. Projection expression: a.b
             if(const auto* proj_expr = inner_node->isa<ast::ProjExpr>()) {
                 log::info("Showing completion for ProjExpr");
-                proj_expr->dump();
                 const Type* type = nullptr;
                 if (auto t = proj_expr->type; t && !t->isa<TypeError>()) type = t;
                 else if (auto t = proj_expr->expr->type; t && !t->isa<TypeError>()) type = t;
@@ -1145,11 +936,10 @@ void Server::setup_events_completion() {
                             if(auto item = completion_item(*field)) result.items.push_back(std::move(*item));
                         }
                     } else if(auto enum_type = type->isa<EnumType>()) {
-                        for (auto& field : struct_type->decl.fields) {
-                            if(auto item = completion_item(*field)) result.items.push_back(std::move(*item));
+                        for (auto& option : enum_type->decl.options) {
+                            if(auto item = completion_item(*option)) result.items.push_back(std::move(*item));
                         }
                     }
-                    type->dump();
                 } else {
                     log::info("type could not be identified");
                 }
@@ -1159,7 +949,6 @@ void Server::setup_events_completion() {
             // 2. Path expression: a::b
             if(const auto* path = inner_node->isa<ast::Path>(); path && path->elems.size() > 1) {
                 log::info("Showing completion for Path");
-                path->dump();
                 const ast::Path::Elem* path_elem = &path->elems.front();
                 // find element of path
                 for (const auto& elem: path->elems) {
@@ -1358,7 +1147,6 @@ void Server::setup_events_completion() {
                 item.label = prim;
                 result.items.push_back(std::move(item));
             };
-            auto& types = compile->type_table;
             show_prim_type("bool");
             show_prim_type("i8");
             show_prim_type("i16");
@@ -1410,8 +1198,7 @@ void Server::setup_events_completion() {
 // -----------------------------------------------------------------------------
 
 void Server::compile_this_and_related_files(std::filesystem::path file, std::string* new_content) {
-    file = fs::absolute(file);
-    Timer _("Compile Files");
+    file = paths::canonical_path(file);
 
     if(new_content) workspace_->set_file_content(file, std::move(*new_content));
 
@@ -1437,7 +1224,7 @@ void Server::compile_this_and_related_files(std::filesystem::path file, std::str
     try {
         // Compile
         compile->compile_files(files, file);
-    } catch(std::runtime_error e) {
+    } catch(const std::exception& e) {
         log::info("Compilation failed with error: {}", e.what());
         compile.reset();
         return;
@@ -1448,35 +1235,16 @@ void Server::compile_this_and_related_files(std::filesystem::path file, std::str
         log::info("Successfully parsed all files, turning off safe mode");
     }
 
-    const bool print_compile_log = false;
-    if(print_compile_log) compile->log.print_summary();
-
     if(compile->log.errors == 0){
         log::info("Compile success");
     } else {
         log::info("Compile failed");
     }
 
-    auto convert_diagnostic = [](const Diagnostic& diag) -> lsp::Diagnostic {
-        lsp::Diagnostic lsp_diag;
-        lsp_diag.message = diag.message;
-        lsp_diag.range = lsp::Range {
-            .start = lsp::Position { static_cast<lsp::uint>(diag.loc.begin.row - 1), static_cast<lsp::uint>(diag.loc.begin.col - 1) },
-            .end   = lsp::Position { static_cast<lsp::uint>(diag.loc.end.row   - 1), static_cast<lsp::uint>(diag.loc.end.col   - 1) }
-        };
-        switch (diag.severity) {
-            case Severity::Error:   lsp_diag.severity = lsp::DiagnosticSeverity::Error;       break;
-            case Severity::Warning: lsp_diag.severity = lsp::DiagnosticSeverity::Warning;     break;
-            case Severity::Info:    lsp_diag.severity = lsp::DiagnosticSeverity::Information; break;
-            case Severity::Hint:    lsp_diag.severity = lsp::DiagnosticSeverity::Hint;        break;
-        }
-        return lsp_diag;
-    };
-
     // Send Diagnostics for the provided files only
     std::unordered_map<std::string, std::vector<lsp::Diagnostic>> diagnostics_by_file;
     for (const auto& diag : compile->diagnostics) {
-        diagnostics_by_file[*diag.loc.file].push_back(convert_diagnostic(diag));
+        diagnostics_by_file[*diag.loc.file].push_back(to_diagnostic(diag));
     }
     for (const auto* file : files) {
         auto path = file->path.generic_string();
@@ -1495,16 +1263,7 @@ void Server::ensure_compile(std::string_view file_view) {
     if(get_file_type(file) != FileType::SourceFile) {
         throw lsp::RequestError(lsp::Error::InvalidParams, "File is not an Artic source file");
     }
-    bool already_compiled = compile && compile->locator.data(file.generic_string());
-    // if(compile){
-    //     log::info("Already compiled files:");
-    //     for(auto& [path, _] : compile->locator.info) {
-    //         log::info(" - {}", path);
-    //     }
-    // }
-    // log::info("is {} already compiled: {}", file.generic_string(), already_compiled);
-
-    if (!already_compiled) compile_this_and_related_files(file);
+    if (!has_compiled(file)) compile_this_and_related_files(file);
     if (!compile) throw lsp::RequestError(lsp::Error::ServerCancelled, "Did not get a compilation result");
 }
 
@@ -1519,26 +1278,7 @@ void Server::ensure_compile(std::string_view file_view) {
 
 
 void Server::publish_config_diagnostics(const workspace::config::ConfigLog& log) {
-    const bool print_to_console = false;
-    if(print_to_console) {
-        log::info("--- Config Log ---");
-        for (auto& e : log.messages) {
-            // if(e.severity > lsp::DiagnosticSeverity::Warning) continue;
-            auto s = 
-                (e.severity == lsp::DiagnosticSeverity::Error)        ? "Error" :
-                (e.severity == lsp::DiagnosticSeverity::Warning)      ? "Warning" : 
-                (e.severity == lsp::DiagnosticSeverity::Information)  ? "Info" : 
-                (e.severity == lsp::DiagnosticSeverity::Hint)         ? "Hint" : 
-                                                                        "Unknown";
-
-            log::info("[{}] {}: {}", s, e.file, e.message);
-        }
-        // log::info("--- Config Log ---");
-        // workspace_->projects_.print();
-    }
-
     std::unordered_map<std::filesystem::path, std::vector<lsp::Diagnostic>> fileDiags;
-    Timer _("Publish Config Diagnostics");
 
     auto find_in_file = [](std::filesystem::path const& file, std::string_view literal) -> std::vector<lsp::Range> {
         std::vector<lsp::Range> ranges;
@@ -1613,11 +1353,10 @@ void Server::publish_config_diagnostics(const workspace::config::ConfigLog& log)
     }
 }
 
-void Server::reload_workspace(const std::string& active_file) {
-    Timer _("Reload Workspace");
+void Server::reload_workspace() {
     log::info("Reloading workspace configuration");
     workspace::config::ConfigLog log;
-    workspace_->reload(log);
+    workspace_->reload();
     publish_config_diagnostics(log);
     
     // Recompile last compile
@@ -1637,16 +1376,11 @@ void Server::reload_workspace(const std::string& active_file) {
 void Server::setup_events_other() {
 
     message_handler_.add<reqst::TextDocument_InlayHint>([this](reqst::TextDocument_InlayHint::Params&& params) -> reqst::TextDocument_InlayHint::Result {
-        Timer _("TextDocument_InlayHint");
         fs::path file = absolute_path(params.textDocument.uri.path());
-        log::info("\n[LSP] <<< TextDocument InlayHint {}:{}:{} to {}:{}", 
-            file.generic_string(), 
-            params.range.start.line + 1, params.range.start.character + 1,
-            params.range.end.line + 1, params.range.end.character + 1);
+        log_request("TextDocument InlayHint", params.textDocument, params.range);
 
         // inlay hints are not allowed to trigger recompile as this is called right after document changed
-        bool already_compiled = compile && compile->locator.data(file.generic_string());
-        if(!already_compiled) return nullptr;
+        if(!has_compiled(file)) return nullptr;
 
         lsp::Array<lsp::InlayHint> hints;
         if(!compile->name_map.files.contains(file.generic_string()))
@@ -1666,25 +1400,12 @@ void Server::setup_events_other() {
                 static_cast<lsp::uint>(hint->loc.end.col - 1)
             };
 
-            // Check if the hint position is within the requested range
-            if (hint_pos.line < params.range.start.line || 
-                hint_pos.line > params.range.end.line ||
-                (hint_pos.line == params.range.start.line && hint_pos.character < params.range.start.character) ||
-                (hint_pos.line == params.range.end.line && hint_pos.character > params.range.end.character)) {
-                continue;
-            }
+            if (!contains(params.range, hint_pos)) continue;
 
             // Format the type name for display
-            std::ostringstream oss;
-            log::Output output(oss, false);
-            Printer printer(output);
-
-            oss << ": ";
-            type->print(printer);
-            
             lsp::InlayHint lsp_hint;
             lsp_hint.position = hint_pos;
-            lsp_hint.label = oss.str();
+            lsp_hint.label = ": " + print_to_string(*type);
             lsp_hint.kind = lsp::InlayHintKindEnum(lsp::InlayHintKind::Type);
             lsp_hint.paddingLeft = false;
             lsp_hint.paddingRight = true;
@@ -1695,87 +1416,6 @@ void Server::setup_events_other() {
         log::info("[LSP] >>> Returning {} inlay hints", hints.size());
         return hints;
     });
-
-    // notif::Workspace_DidChangeWorkspaceFolders
-    // notif::Workspace_DidCreateFiles
-    // notif::Workspace_DidDeleteFiles
-    // notif::Workspace_DidRenameFiles
-
-    // req::CallHierarchy_IncomingCalls
-    // req::CallHierarchy_OutgoingCalls
-    // req::Client_RegisterCapability
-    // req::Client_UnregisterCapability
-    // req::CodeAction_Resolve
-    // req::CodeLens_Resolve
-    // req::CompletionItem_Resolve
-    // req::DocumentLink_Resolve
-    // req::InlayHint_Resolve
-    // req::TextDocument_CodeAction
-    // req::TextDocument_CodeLens
-    // req::TextDocument_ColorPresentation
-    // req::TextDocument_Completion
-    // req::TextDocument_Declaration
-    
-
-    // req::TextDocument_Diagnostic
-    // req::TextDocument_DocumentColor
-    // req::TextDocument_DocumentHighlight
-    // req::TextDocument_DocumentLink
-    // req::TextDocument_FoldingRange
-    // req::TextDocument_Formatting
-    // req::TextDocument_Implementation
-    // req::TextDocument_InlayHint
-    // req::TextDocument_InlineCompletion
-    // req::TextDocument_InlineValue
-    // req::TextDocument_LinkedEditingRange
-    // req::TextDocument_Moniker
-    // req::TextDocument_OnTypeFormatting
-    // req::TextDocument_PrepareCallHierarchy
-    // req::TextDocument_PrepareRename
-    // req::TextDocument_PrepareTypeHierarchy
-    // req::TextDocument_RangeFormatting
-    // req::TextDocument_RangesFormatting
-    // req::TextDocument_References
-    // req::TextDocument_Rename
-    // req::TextDocument_SelectionRange
-    // req::TextDocument_SemanticTokens_Full
-    // req::TextDocument_SemanticTokens_Full_Delta
-    // req::TextDocument_SemanticTokens_Range
-    // req::TextDocument_SignatureHelp
-    // req::TextDocument_TypeDefinition
-    // req::TextDocument_WillSaveWaitUntil
-    // req::TypeHierarchy_Subtypes
-    // req::TypeHierarchy_Supertypes
-    // req::Window_ShowDocument
-    // req::Window_ShowMessageRequest
-    // req::Window_WorkDoneProgress_Create
-    // req::Workspace_ApplyEdit
-    // req::Workspace_CodeLens_Refresh
-    // req::Workspace_Configuration
-    // req::Workspace_Diagnostic
-    // req::Workspace_Diagnostic_Refresh
-    // req::Workspace_ExecuteCommand
-    // req::Workspace_FoldingRange_Refresh
-    // req::Workspace_InlayHint_Refresh
-    // req::Workspace_InlineValue_Refresh
-    // req::Workspace_SemanticTokens_Refresh
-    // req::Workspace_Symbol
-    // req::Workspace_WillCreateFiles
-    // req::Workspace_WillDeleteFiles
-    // req::Workspace_WillRenameFiles
-    // req::Workspace_WorkspaceFolders
-    // req::WorkspaceSymbol_Resolve
-    // notif::CancelRequest
-    // notif::LogTrace
-    // notif::Progress
-    // notif::SetTrace
-    // notif::Exit
-    // notif::Telemetry_Event
-    // notif::TextDocument_PublishDiagnostics
-    // notif::TextDocument_WillSave
-    // notif::Window_LogMessage
-    // notif::Window_ShowMessage
-    // notif::Window_WorkDoneProgress_Cancel
 }
 
 } // namespace artic::ls

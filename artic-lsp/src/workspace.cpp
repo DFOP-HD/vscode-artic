@@ -2,13 +2,13 @@
 
 #include "artic/arena.h"
 #include "config.h"
+#include "paths.h"
 
 #include "artic/log.h"
 
 #include <algorithm>
-#include <fstream>
 #include <filesystem>
-#include <iostream>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <vector>
@@ -17,65 +17,17 @@
 
 namespace artic::ls::workspace {
 
-fs::path canonical_path(const fs::path& file) {
-    std::error_code ec;
-    auto path = fs::weakly_canonical(file, ec);
-    if (ec) path = file.lexically_normal();
-
-#ifdef _WIN32
-    // Fold the drive letter to lower case, the spelling VS Code uses in `file:` URIs.
-    // Everything else is left alone: the rest of the path is echoed back to the editor
-    // in diagnostic URIs, and lowercasing it would stop those matching the open document.
-    auto str = path.generic_string();
-    if (str.size() >= 2 && str[1] == ':')
-        str[0] = static_cast<char>(std::tolower(static_cast<unsigned char>(str[0])));
-    return fs::path(str);
-#else
-    return path;
-#endif
-}
-
 // File ----------------------------------------------------------------------
-
-static std::optional<std::string> read_file(const fs::path& file) {
-    std::ifstream is(file);
-    if (!is)
-        return std::nullopt;
-    // Try/catch needed in case file is a directory (throws exception upon read)
-    try {
-        return std::make_optional(std::string(
-            std::istreambuf_iterator<char>(is),
-            std::istreambuf_iterator<char>()
-        ));
-    } catch (...) {
-        return std::nullopt;
-    }
-}
 
 void File::read() {
     if (!text)
-        text = read_file(path);
+        text = paths::read_file(path);
     if (!text) log::error("Could not read file {}", path);
 }
 
-// Project --------------------------------------------------------------------
-
-// std::vector<const File*> Project::collect_files() const {
-//     std::unordered_set<const File*> result;
-//     for (const auto& file : files) {
-//         result.insert(file.get());
-//     }
-//     for (const auto& dependency : dependencies){
-//         auto dep_files = dependency->collect_files();
-//         result.insert(dep_files.begin(), dep_files.end());
-//     }
-//     std::vector res(result.begin(), result.end());
-//     return res;
-// }
-
 // Workspace --------------------------------------------------------------------
 
-void Workspace::reload(config::ConfigLog& log) {
+void Workspace::reload() {
     projects_.clear();
     files_.clear();
     configs_.clear();
@@ -83,9 +35,141 @@ void Workspace::reload(config::ConfigLog& log) {
     project_for_file_cache_.clear();
 }
 
+std::vector<File*> Workspace::collect_project_files(const fs::path& file, config::ConfigLog& log) {
+    if (auto project = discover_project_for_file(file, log)) {
+        auto files = files_for_project(*project);
+        bool is_default_project = !uses_file(*project, file);
+        if (is_default_project) {
+            files.insert(tracked_file(file));
+        }
+        log::info("Found file '{}' in project '{}' with {} total files {}", file.generic_string(), project->name, files.size(), is_default_project ? " (default project)" : "");
+        return std::vector<File*>(files.begin(), files.end());
+    }
+    return {tracked_file(file)};
+}
+
+bool Workspace::on_config_changed(fs::path config_path, config::ConfigLog& log) {
+    config_path = paths::canonical_path(config_path);
+    log::info("Configuration file changed: {}", config_path.generic_string());
+    ConfigPath p {
+        .path = config_path,
+        .raw_path_string = config_path.generic_string(),
+        .is_optional = false
+    };
+    bool known = configs_.contains(config_path);
+    if(known) reload();
+    instantiate_config(p, log);
+    return known;
+}
+
+Project* Workspace::discover_project_for_file(const fs::path& file, config::ConfigLog& log) {
+    auto key = paths::canonical_path(file);
+    if (auto it = project_for_file_cache_.find(key); it != project_for_file_cache_.end())
+        return it->second;
+    if (auto project = find_config_recursive(key.parent_path(), key, log)) {
+        project_for_file_cache_[key] = project;
+        return project;
+    }
+    return nullptr;
+}
+
+Project* Workspace::find_config_recursive(fs::path dir, const fs::path& file, config::ConfigLog& log) {
+    log::info("- Searching for config for file {}", file.generic_string());
+    do {
+        log::info("- Looking at dir {}", dir.generic_string());
+        if(auto config = find_config_in_dir(dir, log)) {
+            if(auto project = find_project_in_config_using_file(*config, file, log)) {
+                log::info("- Found matching project '{}' in config {}", project->name, project->origin.generic_string());
+                return project;
+            }
+            log::info("- Found config '{}', but does not contain a matching project, continuing...", config->path.generic_string());
+        }
+        dir = dir.parent_path();
+    } while(dir.root_path() != dir);
+    log::info("- Did not find matching config for file {}", file.generic_string());
+    return nullptr;
+}
+
+ConfigFile* Workspace::find_config_in_dir(const fs::path& dir, config::ConfigLog& log) {
+    static constexpr std::string_view file_names[] = {
+        ".artic-lsp",
+        "artic.json"
+    };
+    for (auto file_name : file_names) {
+        // Must match how instantiate_config() keys the cache, or every lookup misses.
+        auto path = paths::canonical_path(dir / file_name);
+        if(!fs::exists(path)) continue;
+        if (auto it = configs_.find(path); it != configs_.end())
+            return it->second.get();
+
+        ConfigPath origin{ .path = path };
+        if (auto config = instantiate_config(origin, log)) {
+            return config;
+        }
+    }
+    return nullptr;
+}
+
+Project* Workspace::find_project_in_config_using_file(const ConfigFile& config, const fs::path& file, config::ConfigLog& log) {
+    for (const auto& project_id : config.projects) {
+        if(auto project = try_get_project(project_id); project && uses_file(*project, file)) {
+            return project;
+        }
+    }
+    for (const auto& include : config.includes) {
+        if(auto cfg = instantiate_config(include, log)) {
+            if(auto project = find_project_in_config_using_file(*cfg, file, log)) {
+                return project;
+            }
+        }
+    }
+    if(config.default_project) {
+        return try_get_project(*config.default_project);
+    }
+    return nullptr;
+}
+
+bool Workspace::uses_file(const Project& project, const fs::path& file) const {
+    auto key = paths::lookup_key(file);
+    for (const auto& f : project.files) {
+        if (paths::lookup_key(f) == key) return true;
+    }
+    for (const auto& dep_id : project.dependencies) {
+        if(auto dep = try_get_project(dep_id)) {
+            if(uses_file(*dep, file)) return true;
+        }
+    }
+    return false;
+}
+
+std::unordered_set<File*> Workspace::files_for_project(const Project& project) {
+    std::unordered_set<File*> res;
+    for (const auto& f : project.files) {
+        res.insert(tracked_file(f));
+    }
+    for (const auto& dep_id : project.dependencies) {
+        if(auto dep = try_get_project(dep_id)) {
+            auto dep_files = files_for_project(*dep);
+            res.insert(dep_files.begin(), dep_files.end());
+        }
+    }
+    return res;
+}
+
+File* Workspace::tracked_file(const fs::path& file) {
+    auto key = paths::lookup_key(file);
+    if (auto it = files_.find(key); it != files_.end())
+        return it->second.get();
+    return files_.insert({key, arena_->make_ptr<File>(paths::canonical_path(file))}).first->second.get();
+}
+
+Project* Workspace::try_get_project(const Project::Identifier& project_id) const {
+    return projects_.contains(project_id) ? projects_.at(project_id).get() : nullptr;
+}
+
 ConfigFile* Workspace::instantiate_config(const ConfigPath& origin, config::ConfigLog& log) {
     auto o = origin;
-    o.path = canonical_path(o.path);
+    o.path = paths::canonical_path(o.path);
     if(configs_.contains(o.path)) {
         return configs_.at(o.path).get();
     }
@@ -203,148 +287,36 @@ ConfigFile* Workspace::instantiate_config_json(const ConfigPath& origin, config:
     // fix circular project dependencies
     std::unordered_set<std::string> visited;
     std::unordered_set<std::string> rec_stack;
-    
-    std::function<bool(const std::string&, const std::string&)> detect_cycle = 
-        [&](const std::string& project_name, const std::string& parent) -> bool {
-        
-        if (!projects_.contains(project_name)) {
-            return false; // dependency doesn't exist, will be handled elsewhere
-        }
-        
-        if (rec_stack.count(project_name)) {
-            // Cycle detected!
-            auto& parent_project = projects_.at(parent);
 
-            auto cycle_ctx = log.scoped_file(parent_project->origin);
-            log.error("Circular dependency detected: " + parent + " -> " + project_name + 
-                     " creates a cycle. Removing this dependency.", project_name);
-            log::info("Circular dependency detected in config '{}': {} -> {}", parent_project->origin.generic_string(), parent, project_name);
-            
-            // Remove the dependency that creates the cycle
-            auto& deps = parent_project->dependencies;
-            deps.erase(std::remove(deps.begin(), deps.end(), project_name), deps.end());
-            
-            return true;
-        }
-        
-        if (visited.count(project_name)) {
-            return false; // already processed
-        }
-        
-        visited.insert(project_name);
-        rec_stack.insert(project_name);
-        
-        // Check all dependencies
-        auto& proj = projects_.at(project_name);
-        for (const auto& dep : proj->dependencies) {
-            if (detect_cycle(dep, project_name)) {
-                // Cycle was detected and fixed in recursive call
+    // A single DFS over all roots. The previous version restarted from every
+    // project-dependency edge with the two arguments swapped, and erased the offending
+    // entry with std::remove while a range-for over that same vector was still live.
+    std::function<void(const std::string&)> detect_cycle = [&](const std::string& name) {
+        auto it = projects_.find(name);
+        if (it == projects_.end()) return; // dependency doesn't exist, handled elsewhere
+        if (!visited.insert(name).second) return;
+
+        rec_stack.insert(name);
+        auto& deps = it->second->dependencies;
+        for (auto dep = deps.begin(); dep != deps.end();) {
+            if (rec_stack.contains(*dep)) {
+                auto cycle_ctx = log.scoped_file(it->second->origin);
+                log.error("Circular dependency detected: " + name + " -> " + *dep +
+                          " creates a cycle. Removing this dependency.", *dep);
+                log::info("Circular dependency detected in config '{}': {} -> {}",
+                          it->second->origin.generic_string(), name, *dep);
+                dep = deps.erase(dep);
+                continue;
             }
+            detect_cycle(*dep);
+            ++dep;
         }
-        
-        rec_stack.erase(project_name);
-        return false;
+        rec_stack.erase(name);
     };
-    
-    // Check each project for cycles
-    for (auto& project : parser.projects) {
-        for (auto& dep : project.dependencies) {
-            log::info("Checking dependency {} -> {}", project.name, dep);
-            visited.clear();
-            rec_stack.clear();
-            detect_cycle(project.name, dep);
-        }
-    }
 
-    // auto log_project_info = [&](const Project& dep, const fs::path& current_config){
-    //     log.file_context = current_config;
-    //     if(dep.origin != current_config)
-    //         log.info("Declared in config \"" + dep.origin.generic_string() + "\"", dep.name);
-
-    //     auto files = dep.collect_files();
-    //     std::ostringstream s;
-    //     auto num_own_files = dep.files.size();
-    //     auto dep_files = files.size() - num_own_files;
-    //     s << num_own_files;
-    //     if(dep_files > 0) s << " + " << dep_files;
-    //     s << " files: " << std::endl;
-    //     for(const auto& file : files) {
-    //         s << "- " << "\"" << fs::weakly_canonical(file->path).generic_string() << "\" " << std::endl;
-    //     }
-    //     log.info(s.str(), dep.name);
-
-    //     if(dep.origin == current_config)
-    //         log.info("Declared in this config", dep.name);
-    // };
-    // // log dependency resolution
-    // for (auto& [id, p] : projects) {
-    //     log.file_context = p.project->origin;
-    //     log_project_info(*p.project, p.project->origin);
-
-    //     for (auto& dep_id : p.dependencies) {
-    //         if(projects.contains(dep_id)) {
-    //             auto& dep = projects.at(dep_id).project;
-    //             log_project_info(*dep, p.project->origin);
-    //         } else {
-    //             // log.error("Failed to resolve dependency " + dep_id + " for project " + p.project->name, p.project->name);
-    //             log.error("Failed to resolve dependency " + dep_id, dep_id);
-    //         }
-    //     }
-    // }
+    for (const auto& project : parser.projects) detect_cycle(project.name);
 
     return configs_.at(origin.path).get();
 }
 
-
-// Project Registry --------------------------------------------------------------------
-
-// static inline void print_project(const Project& proj, int ind = 0){
-//     auto indent = [](int i){ 
-//         // log::Output out(std::clog, false);
-//         for (int j=0; j<i; j++)
-//             std::clog << "  ";
-//     };
-
-//     indent(ind);
-//     log::info("project: '{}' (", proj.name);
-    
-//     indent(ind+1);
-//     log::info("files: (");
-//     for (const auto& file : proj.files) {
-//         indent(ind+2);
-//         log::info("{}", file->path);
-//     }
-
-//     indent(ind+1);
-//     log::info(")");
-    
-//     indent(ind+1);
-//     log::info("dependencies: (");
-//     for (const auto& dep : proj.dependencies) {
-//         const bool print_recursive = false;
-//         if(print_recursive)
-//             print_project(*dep, ind + 2);
-//         else {
-//             indent(ind+2);
-//             log::info("project: '{}'", dep->name);
-//         }
-//     }
-//     indent(ind+1);
-//     log::info(")");
-//     indent(ind);
-//     log::info(")");
-// }
-
-// void ProjectRegistry::print() const {
-//     log::info("--- Project Registry ---");
-//     print_project(*default_project);
-//     for (const auto& p : all_projects){
-//         print_project(*p);
-//     }
-//     log::info("--- Project Registry ---");
-//     std::clog << std::endl;
-// }
-
-
-
-} // namespace artic::ls
+} // namespace artic::ls::workspace

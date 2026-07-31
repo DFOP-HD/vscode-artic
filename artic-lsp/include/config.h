@@ -2,6 +2,8 @@
 #define ARTIC_LS_CONFIG_H
 
 #include "workspace.h"
+#include "paths.h"
+#include "text.h"
 #include <nlohmann/json.hpp>
 #include <vector>
 #include <string>
@@ -64,15 +66,12 @@ struct ConfigLog {
     void info (std::string msg, std::string context="") { messages.push_back(make_message(Severity::Information, std::move(msg), context)); }
 
 private:
-    static std::string quote(std::string_view in) {
-        return '\"' + std::string(in) + '\"';
-    }
     Message make_message(Severity s, std::string msg, std::string context) {
         return Message{
             .message = std::move(msg),
             .severity = s,
             .file = file_context, 
-            .context = context.empty() ? std::nullopt : std::make_optional(Context{.literal=quote(context)})
+            .context = context.empty() ? std::nullopt : std::make_optional(Context{.literal=text::quote(context)})
         };
     }
 };
@@ -111,17 +110,11 @@ struct FilePatternParser {
 
     std::vector<fs::path> results;
 private:
-    void expand() {
-        auto original_pattern = pattern;
-        expand_home();
-        if (!fs::exists(root) || !fs::is_directory(root)) {
-            log.error("Folder does not exist: " + root.generic_string(), original_pattern);
-            return;
-        }
-        split();
-        dfs(0, root);
-        make_canoncial();
-    }
+    void expand();
+    void expand_home();
+    void split();
+    void dfs(size_t idx, const fs::path& base);
+    void make_canonical();
 
     fs::path root;
     std::string pattern;
@@ -130,38 +123,6 @@ private:
     // State
     std::vector<std::string> parts;
     std::unordered_set<std::string> dedup;
-
-    bool is_wildcard(const std::string& s){ return s.find('*') != std::string::npos || s.find('?') != std::string::npos; };
-
-    void expand_home() {
-        if (pattern.starts_with("~/")) {
-            const char* home = std::getenv("HOME");
-            root = home ? home : fs::current_path().root_path();
-            pattern.erase(0, 2);
-        }
-        if(pattern[0] == '/') {
-            root = fs::current_path().root_path();
-            pattern.erase(0, 1);
-        }
-    }
-
-    void split() {
-        parts.reserve(8);
-        std::string cur; cur.reserve(pattern.size());
-        for(char c : pattern) {
-            if(c == '/') { parts.push_back(cur); cur.clear(); }
-            else cur.push_back(c);
-        }
-        parts.push_back(cur);
-    }
-
-    void dfs(size_t idx,const fs::path& base);
-
-    void make_canoncial() {
-        for(auto& p : results) {
-            p = fs::weakly_canonical(p);
-        }
-    }
 };
 
 

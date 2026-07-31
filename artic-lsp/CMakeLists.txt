@@ -30,16 +30,23 @@ include(cmake/Dependencies.cmake)
 
 add_executable(artic-lsp
     src/main.cpp
+    include/ast_render.h
     include/compile.h
     include/config.h
     include/crash.h
+    include/lsp_convert.h
+    include/paths.h
     include/server.h
+    include/text.h
     include/workspace.h
+    src/ast_render.cpp
     src/server.cpp
     src/workspace.cpp
     src/crash.cpp
     src/compile.cpp
     src/config.cpp
+    src/lsp_convert.cpp
+    src/paths.cpp
 )
 
 # Not EXCLUDE_FROM_ALL: the standalone `artic` binary is needed to validate fixtures and
@@ -56,9 +63,9 @@ target_include_directories(artic-lsp PUBLIC
 # libartic's own options/definitions are set by artic/src/CMakeLists.txt,
 # which enables ENABLE_LSP when the artic-lsp target exists.
 if(MSVC)
-    target_compile_options(artic-lsp PRIVATE /wd4996)
+    target_compile_options(artic-lsp PRIVATE /W3 /wd4996)
 else()
-    target_compile_options(artic-lsp PRIVATE -Wno-deprecated-declarations)
+    target_compile_options(artic-lsp PRIVATE -Wall -Wno-deprecated-declarations)
 endif()
 
 # Statically link the GNU runtimes so the binary is portable. Probed rather than

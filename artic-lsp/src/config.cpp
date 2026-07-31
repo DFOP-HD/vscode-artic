@@ -1,10 +1,11 @@
 #include "config.h"
 
 #include "artic/log.h"
+#include "paths.h"
+#include "text.h"
 #include <algorithm>
 #include <fstream>
 #include <filesystem>
-#include <iostream>
 #include <optional>
 #include <sstream>
 #include <unordered_set>
@@ -70,23 +71,6 @@ namespace artic::ls::workspace {
 // Config --------------------------------------------------------------------
 
 namespace config {
-static const char* HOME = std::getenv("HOME");
-
-static fs::path to_absolute_path(fs::path base_dir, std::string path) {
-    if(path.starts_with("/")) return canonical_path(path);
-    if(path.starts_with("~/")) {
-        base_dir = fs::path(HOME);
-        path = path.substr(2);
-    }
-    return canonical_path(base_dir / path);
-}
-
-// .sln and .vcxproj are Windows-only formats and always spell paths with backslashes,
-// which are ordinary filename characters everywhere else.
-static std::string from_msbuild_path(std::string path) {
-    std::replace(path.begin(), path.end(), '\\', '/');
-    return path;
-}
 
 bool ConfigParser::parse() {
     try {
@@ -123,12 +107,10 @@ bool ConfigParser::parse() {
         }
 
         config.version = j["artic-config"].get<std::string>();
-        int version = 2;
-        if (config.version != "2.0") {
-            log.warn("Unsupported artic-config version (Newest is 2.0)", "artic-config");
-        } else if (config.version == "1.0") {
+        if (config.version == "1.0") {
             log.warn("Deprecated artic-config version (Newest is 2.0)", "artic-config");
-            version = 1;
+        } else if (config.version != "2.0") {
+            log.warn("Unsupported artic-config version (Newest is 2.0)", "artic-config");
         }
 
         if (auto pj = j.find("projects"); pj != j.end()) {
@@ -167,7 +149,7 @@ bool ConfigParser::parse() {
                     path = path.substr(0, path.size()-1);
                     include.is_optional = true;
                 }
-                include.path = to_absolute_path(origin.path.parent_path(), path);
+                include.path = paths::to_absolute_path(origin.path.parent_path(), path);
 
                 config.includes.push_back(std::move(include));
             }
@@ -199,7 +181,7 @@ std::optional<Project> ConfigParser::parse_project(const nlohmann::json& pj) {
     if (folder_ptrn.empty()) {
         p.root_dir = root;
     } else {
-        auto res = to_absolute_path(root, folder_ptrn);
+        auto res = paths::to_absolute_path(root, folder_ptrn);
         if(fs::exists(res) && fs::is_directory(res)) {
             p.root_dir = res;
         } else {
@@ -213,7 +195,7 @@ std::optional<Project> ConfigParser::parse_project(const nlohmann::json& pj) {
     p.file_patterns = pj.value<std::vector<std::string>>("files", {});
     auto files = evaluate_patterns(p);
     for (auto& file : files) {
-        p.files.push_back(canonical_path(file));
+        p.files.push_back(paths::canonical_path(file));
     }
     return p;
 }
@@ -284,11 +266,57 @@ std::unordered_set<fs::path> ConfigParser::evaluate_patterns(Project& project) {
     return matched_files;
 }
 
+namespace {
+
+bool is_wildcard(const std::string& s) {
+    return s.find('*') != std::string::npos || s.find('?') != std::string::npos;
+}
+
+} // anonymous namespace
+
+void FilePatternParser::expand() {
+    auto original_pattern = pattern;
+    expand_home();
+    if (!fs::exists(root) || !fs::is_directory(root)) {
+        log.error("Folder does not exist: " + root.generic_string(), original_pattern);
+        return;
+    }
+    split();
+    dfs(0, root);
+    make_canonical();
+}
+
+void FilePatternParser::expand_home() {
+    if (pattern.starts_with("~/")) {
+        if (const char* home = std::getenv("HOME")) root = home;
+        else root = fs::current_path().root_path();
+        pattern.erase(0, 2);
+    }
+    if (pattern.starts_with('/')) {
+        root = fs::current_path().root_path();
+        pattern.erase(0, 1);
+    }
+}
+
+void FilePatternParser::split() {
+    parts.reserve(8);
+    std::string cur; cur.reserve(pattern.size());
+    for (char c : pattern) {
+        if (c == '/') { parts.push_back(cur); cur.clear(); }
+        else cur.push_back(c);
+    }
+    parts.push_back(cur);
+}
+
+void FilePatternParser::make_canonical() {
+    for (auto& p : results) p = paths::canonical_path(p);
+}
+
 void FilePatternParser::dfs(size_t idx,const fs::path& base){
     if(idx == parts.size()) {
         // End: if base is a regular file, record it.
         if(fs::is_regular_file(base)) {
-            auto norm = fs::weakly_canonical(base);
+            auto norm = paths::canonical_path(base);
             if(dedup.insert(norm.generic_string()).second) results.emplace_back(norm);
         }
         return;
@@ -340,7 +368,7 @@ void FilePatternParser::dfs(size_t idx,const fs::path& base){
         if(fnmatch(part.c_str(), filename.c_str(), 0) == 0) {
             if(idx + 1 == parts.size()) {
                 if(it->is_regular_file()) {
-                    auto norm = fs::weakly_canonical(path);
+                    auto norm = paths::canonical_path(path);
                     if(dedup.insert(norm.generic_string()).second) results.emplace_back(norm);
                 }
             } else if(it->is_directory()) {
@@ -378,9 +406,8 @@ std::optional<Project> parse_vcxproj(const ConfigPath& origin, ConfigLog& log) {
             std::vector<fs::path> files;
             std::string file;
             while (ss >> file) {
-                auto abs_path = to_absolute_path(origin.path.parent_path(), from_msbuild_path(file));
+                auto abs_path = paths::to_absolute_path(origin.path.parent_path(), paths::from_msbuild_path(file));
                 files.push_back(abs_path);
-                // log.info("Found file in vcxproj: " + abs_path.generic_string());
             }
             if (!files.empty()) {
                 Project p;
@@ -433,11 +460,10 @@ std::vector<ConfigPath> parse_sln(const ConfigPath& origin, ConfigLog& log) {
         if (fields.size() < 2) continue;
 
         auto& rel = fields[1];
-        auto ext = fs::path(rel).extension().string();
-        std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return std::tolower(c); });
+        auto ext = text::to_lower(fs::path(rel).extension().string());
         if (ext != ".vcxproj") continue;
 
-        auto abs_path = to_absolute_path(origin.path.parent_path(), from_msbuild_path(rel));
+        auto abs_path = paths::to_absolute_path(origin.path.parent_path(), paths::from_msbuild_path(rel));
         if (!seen.insert(abs_path.generic_string()).second) continue;
         if (!fs::exists(abs_path)) {
             log.warn("Solution references a project that does not exist: " + abs_path.generic_string(), rel);
@@ -452,10 +478,10 @@ std::vector<ConfigPath> parse_sln(const ConfigPath& origin, ConfigLog& log) {
 
 namespace {
 
-std::string to_lower(std::string s) {
-    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return std::tolower(c); });
-    return s;
-}
+using text::to_lower;
+using text::split_whitespace;
+using text::strip_quotes;
+using text::trim_left;
 
 // Ninja escapes `$`, `:`, space and newline with a leading `$` inside build statements.
 std::string ninja_unescape(std::string_view in) {
@@ -466,26 +492,6 @@ std::string ninja_unescape(std::string_view in) {
         out.push_back(in[i]);
     }
     return out;
-}
-
-std::string_view trim_left(std::string_view s) {
-    auto pos = s.find_first_not_of(" \t");
-    return pos == std::string_view::npos ? std::string_view{} : s.substr(pos);
-}
-
-// Commands are wrapped in `cmd.exe /C "..."`, so tokens carry stray quotes.
-std::string_view strip_quotes(std::string_view s) {
-    while (!s.empty() && (s.front() == '"' || s.front() == '\'')) s.remove_prefix(1);
-    while (!s.empty() && (s.back() == '"' || s.back() == '\'')) s.remove_suffix(1);
-    return s;
-}
-
-std::vector<std::string> split_whitespace(std::string_view s) {
-    std::vector<std::string> tokens;
-    std::istringstream ss{std::string(s)};
-    std::string token;
-    while (ss >> token) tokens.push_back(std::move(token));
-    return tokens;
 }
 
 bool is_artic_executable(std::string_view token) {
@@ -569,7 +575,7 @@ std::vector<Project> parse_ninja(const ConfigPath& origin, ConfigLog& log) {
             auto exe = std::find_if(tokens.begin(), tokens.end(), is_artic_executable);
             if (exe == tokens.end()) continue;
             for (auto it = exe + 1; it != tokens.end() && !it->starts_with("-"); ++it) {
-                if (is_artic_source(*it)) files.push_back(to_absolute_path(cwd, *it));
+                if (is_artic_source(*it)) files.push_back(paths::to_absolute_path(cwd, *it));
             }
             break; // as with .vcxproj, the first artic invocation wins
         }

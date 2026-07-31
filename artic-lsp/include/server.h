@@ -11,7 +11,6 @@
 #include <lsp/messagehandler.h>
 #include <lsp/messagebase.h>
 #include "compile.h"
-#include <span>
 
 namespace artic::ls {
 
@@ -26,6 +25,8 @@ public:
 
     /// Start the LSP server main loop
     int run();
+
+private:
     void setup_events() {
         setup_events_initialization();
         setup_events_modifications();
@@ -42,24 +43,29 @@ public:
     void setup_events_other();
 
     void send_message(const std::string& message, lsp::MessageType type);
-    void compile_files(std::span<const workspace::File*> files);
     void compile_this_and_related_files(std::filesystem::path file, std::string* new_content = nullptr);
     void ensure_compile(std::string_view file_view);
 
+    // Whether the last compilation already covers this file. Requests that arrive right
+    // after a change (semantic tokens, inlay hints) must not trigger a recompile.
+    bool has_compiled(const std::filesystem::path& file) {
+        return compile && compile->locator.data(file.generic_string());
+    }
+
     enum class FileType { SourceFile, ConfigFile };
     static FileType get_file_type(const std::filesystem::path& file);
+
+    void reload_workspace();
+    void publish_config_diagnostics(const workspace::config::ConfigLog& log);
 
     lsp::Connection connection_;
     lsp::MessageHandler message_handler_;
     bool running_ = false;
     bool safe_mode_ = false;
-    
+
     // Project management
     std::unique_ptr<workspace::Workspace> workspace_;
     std::optional<Compiler> compile;
-
-    void reload_workspace(const std::string& active_file = {});
-    void publish_config_diagnostics(const workspace::config::ConfigLog& log);
 
     // Files that currently show config diagnostics, so they can be cleared once
     // the config is fixed. The editor keeps the last published set otherwise.

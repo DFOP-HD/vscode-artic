@@ -54,21 +54,6 @@ struct Compiler {
     bool enable_all_warns = true;
 };
 
-class Timer {
-public:
-    explicit Timer(std::string_view label)
-        : label_(label), start_(std::chrono::steady_clock::now()) {}
-
-    ~Timer() {
-        auto end = std::chrono::steady_clock::now();
-        auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start_).count();
-        // log::info("{} took {} ms", label_, ms);
-    }
-private:
-    std::string label_;
-    std::chrono::steady_clock::time_point start_;
-};
-
 } // namespace artic::ls
 
 #endif // ARTIC_LS_COMPILE_H

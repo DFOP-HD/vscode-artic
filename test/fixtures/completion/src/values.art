@@ -1,0 +1,25 @@
+// Fixture for textDocument/completion. This file compiles as it stands; the tests
+// insert the incomplete expressions they need through didChange.
+// Written for this repository - do not replace with code from other AnyDSL projects.
+
+struct Point {
+    x: i32,
+    y: i32
+}
+
+enum Shape {
+    Empty,
+    Dot(Point)
+}
+
+// No declared return type, so the server has to read it off the ForallType.
+fn identity[T](value: T) = value;
+
+fn main() -> i32 {
+    let shape = Shape::Dot(Point { x = 1, y = 2 });
+    let scaled = identity(3);
+    match shape {
+        Shape::Empty => scaled,
+        Shape::Dot(p) => p.x + p.y
+    }
+}

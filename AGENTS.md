@@ -17,6 +17,27 @@ A VS Code language server for AnyDSL's Artic/Impala language.
 Compile pipeline used by the server: `Lexer -> Parser -> NameBinder -> TypeChecker -> Summoner`,
 driven by `Compiler::compile_files()` in [artic-lsp/src/compile.cpp](artic-lsp/src/compile.cpp).
 
+### Inside `artic-lsp/`
+
+`server.cpp` is deliberately one large file — all LSP request handlers live there, grouped
+by feature in anonymous namespaces. Everything that is *not* a request handler belongs in
+one of the utility modules, so a handler stays readable:
+
+| Module | Namespace | What belongs in it |
+| ------ | --------- | ------------------ |
+| `paths.h` / `paths.cpp` | `artic::ls::paths` | Everything that turns a path or URI into a file identity: `canonical_path`, `lookup_key`, `to_absolute_path`, `from_msbuild_path`, `read_file`. **The only legitimate source of a lookup key** — see the file-identity gotcha below. |
+| `text.h` | `artic::ls::text` | Header-only string helpers: `to_lower`, `trim_left`, `strip_quotes`, `split_whitespace`, `quote`. |
+| `lsp_convert.h` / `.cpp` | `artic::ls` | Conversions between artic's `Loc`/`Severity`/`Diagnostic` and the `lsp::` protocol types, plus `contains(range, position)`. |
+| `ast_render.h` / `.cpp` | `artic::ls` | Turning AST nodes into display strings: `print_to_string`, `print_param_list`, `render_decl`. Hover, document symbols and completion all render through here so they cannot disagree. |
+| `workspace.{h,cpp}` | `artic::ls::workspace` | Config discovery, the project registry, file tracking. |
+| `config.{h,cpp}` | `artic::ls::config` | Parsing `artic.json`, `.artic-lsp`, `.vcxproj`, `.sln`, `build.ninja`, and `ConfigLog`. |
+| `compile.{h,cpp}` | `artic::ls` | Driving `libartic` and holding the resulting AST, `Locator` and `NameMap`. |
+
+The `artic-lsp` target is built with `-Wall` (`/W3` on MSVC). The flags are scoped to that
+target only, because `libartic` and the fetched dependencies are not warning-clean and are
+not ours to fix. `-Wno-deprecated-declarations` / `/wd4996` are set because `lsp-framework`
+uses `std::codecvt`.
+
 ## Build
 
 Dependencies (thorin, lsp-framework, nlohmann_json, half) are fetched by CMake via
@@ -319,9 +340,7 @@ Ordered. Keep status markers current.
    - Removed the dead `propagate_to_file` branch in `publish_config_diagnostics()`.
 
    Follow-up: a valid project config always emits an Information-severity message like
-   `+ 1 files | total matches: 1 files:` against its `files` pattern. It is deliberate
-   (an "N files matched" annotation) but it renders as noise in the Problems panel and the
-   wording looks malformed. Decide whether it should be an inlay hint instead.
+   `+ 1 files | total matches: 1 files:` against its `files` pattern. Folded into item 20.
 3. **Support `.sln` files in the config** — *done*. `"include": ["../build/x.sln"]` expands to
    the `.vcxproj` files the solution lists. Solution folders (which reuse the `Project(...)`
    syntax) are skipped, and so is any project without an `artic.exe` build command — a
@@ -397,8 +416,8 @@ Ordered by value/effort. Items 8–12 need no submodule change and reuse infrast
 already exists: `ls::NameMap` (`find_decl_at`, `find_ref_at`, `find_decl`, `find_refs` in
 [artic/include/artic/name_map.h](artic/include/artic/name_map.h)),
 `ast::Node::traverse_children()` with `TraverseFn`, and the type printer the inlay-hint
-handler already uses. The commented-out capability list at the bottom of
-[artic-lsp/src/server.cpp](artic-lsp/src/server.cpp) is the full menu of what is missing.
+handler already uses. The [LSP specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/)
+is the reference for what else a server can advertise.
 
 8. **Hover** — *done*. `TextDocument_Hover` is registered in `setup_events_definitions()` and
    `hoverProvider` is advertised. It resolves the cursor with `find_decl_at`, falling back to
@@ -460,6 +479,16 @@ handler already uses. The commented-out capability list at the bottom of
 19. **Doc comments** — the lexer discards `///`, so nothing can surface documentation in
     hover or completion. Capturing them is a fork change under the `ENABLE_LSP` policy, and
     it must not alter tokenisation for the standalone compiler.
+20. **Project overview in the config file** — the config parser used to annotate `artic.json`
+    with per-project information: which config declared each project, its own file count
+    versus the count inherited from dependencies, and the resolved file list. Most of it was
+    commented out because it rendered as noise in the Problems panel; the one piece still
+    live is the `+ N files | total matches:` Information diagnostic (item 2's follow-up),
+    which reads as malformed for the same reason. Reintroduce the whole thing as **inlay
+    hints on the `artic.json` document** rather than diagnostics, so the Problems panel stays
+    reserved for actual problems. The commented code was deleted in the refactor; it is
+    recoverable from git history (`workspace.cpp`: `Project::collect_files`,
+    `log_project_info`, `print_project`, `ProjectRegistry::print`).
 
 ### Deferred
 
@@ -494,6 +523,25 @@ handler already uses. The commented-out capability list at the bottom of
 
 ## Gotchas
 
+- **`isa<T>()` returns null, and the completion handler used to dereference it.** The
+  projection branch tested `type->isa<StructType>()` and then read `struct_type->decl.fields`
+  from *both* the struct and the enum path, so typing `.` after an enum value dereferenced a
+  null `StructType` and **killed the server process** — every subsequent request in the
+  session timed out, which looks like a hang rather than a crash. Guarded by
+  [test/completion.test.mjs](test/completion.test.mjs).
+- **A generic function's `Node::type` is a `ForallType`, not a `FnType`.** Asking
+  `fn->type->isa<FnType>()` therefore fails for every `fn f[T](...)`, and the completion item
+  silently lost its `detail`. Unwrap through `ForallType::body` first. Same trap applies
+  anywhere a signature is read off a declaration.
+- **Cycle detection must run one DFS over all roots, not one per dependency edge.** The
+  original loop seeded `detect_cycle(project.name, dep)` with the arguments swapped relative
+  to the parameter list, cleared `visited`/`rec_stack` per edge, and erased the offending
+  entry with `std::remove` while a range-for over that same vector was live — undefined
+  behaviour whenever a project depends on itself. Guarded by
+  [test/circular-dependencies.test.mjs](test/circular-dependencies.test.mjs).
+- **The project registry is per server session, not per workspace.** A duplicate project
+  name is warned about and *ignored*, so two staged workspaces in one test suite must not
+  reuse a name — the second one's projects silently do not exist.
 - **A `catch` block runs after the RAII file-context scope has already unwound.**
   `ConfigParser::parse()` wraps its whole body in `try`, and `ConfigLog::scoped_file()` restores
   the previous context from its destructor — which fires while the exception propagates, before
@@ -527,8 +575,8 @@ handler already uses. The commented-out capability list at the bottom of
   exist, because the lazy lookup in `find_project_in_config_using_file()` reaches it again
   later with no idea whether the include was optional.
 
-- **A file's identity is its canonicalised path string.** `workspace::canonical_path()` in
-  [artic-lsp/src/workspace.cpp](artic-lsp/src/workspace.cpp) is the single place that
+- **A file's identity is its canonicalised path string.** `paths::canonical_path()` in
+  [artic-lsp/src/paths.cpp](artic-lsp/src/paths.cpp) is the single place that
   produces it; everything that turns a path or URI into a lookup key must go through it.
   `File::path` is handed to the lexer and the locator, so every `Loc::file` string, every
   `name_map` key and every diagnostic URI derives from it.

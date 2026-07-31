@@ -1,6 +1,4 @@
 #include "crash.h"
-// #define B_STACKTRACE_IMPL
-// #include "b_stacktrace.h"
 #include <iostream>
 #include <csignal>
 #include <cstdlib>
@@ -19,8 +17,6 @@ static void crash_handler(int sig) {
         default:      std::cerr << "Unknown signal " << sig; break;
     }
     std::cerr << "\n";
-    
-    // std::cerr << b_stacktrace_get_string() << std::flush;
     
     // Restore default handler and re-raise
     signal(sig, SIG_DFL);
