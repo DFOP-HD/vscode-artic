@@ -1,0 +1,10 @@
+// Fixture: a local binding that is never read.
+//
+// The "unused identifier" warning is emitted when a scope is popped. A fork change that
+// suppressed it for function prototypes accidentally suppressed it for *every* scope that
+// was not a prototype, which silently disabled the warning across the board.
+
+fn twice(a: i32) -> i32 {
+    let unused_local = a * 3;
+    a + a
+}

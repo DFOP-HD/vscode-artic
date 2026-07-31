@@ -124,9 +124,45 @@ git -C artic diff --stat upstream/master...HEAD
 
   (`upstream` = `https://github.com/AnyDSL/artic.git`; add it if missing.)
 - LSP-only additions to artic must be guarded with `#ifdef ENABLE_LSP`. The define is applied
-  in [artic/src/CMakeLists.txt](artic/src/CMakeLists.txt) when the `artic-lsp` target exists.
+  in [artic/src/CMakeLists.txt](artic/src/CMakeLists.txt) when the `artic-lsp` target exists:
+
+```cmake
+if (TARGET artic-lsp)
+    target_compile_definitions(libartic PUBLIC -DENABLE_LSP)
+endif()
+```
+
+- Whole files that exist only for the LSP (`include/artic/name_map.h`, `src/name_map.cpp`)
+  guard their **entire body** instead of being added conditionally to the target. They are
+  listed in `src/CMakeLists.txt` unconditionally and compile to nothing without the define,
+  which keeps the file list identical in both configurations.
+- **Documented exception:** the AST traversal in [artic/include/artic/ast.h](artic/include/artic/ast.h)
+  (`Node::TraverseFn`, `traverse()`, and 54 one-line `traverse_children()` overrides) is
+  LSP-only but deliberately **not** guarded. Guarding it needs an `ARTIC_TRAVERSE_CHILDREN(...)`
+  macro at all 54 sites, which makes the upstream diff harder to review rather than easier,
+  and buys only a vtable slot per node type. The rule exists to keep the standalone compiler
+  clean and buildable — it is, in both configurations.
 - The standalone `artic` compiler must keep building **with and without** `ENABLE_LSP`.
   It previously did not — `main.cpp` included `server.h`, which only exists in `artic-lsp/`.
+  Verify both, every time:
+
+```powershell
+cmake --build artic-lsp/buildNoLsp --parallel      # source dir: artic-lsp/build-nolsp-src
+ctest --test-dir artic-lsp/buildNoLsp -E "^thorin_"
+```
+
+  `artic-lsp/build-nolsp-src/CMakeLists.txt` is a throwaway project that does
+  `add_subdirectory(../../artic artic)` **without** an `artic-lsp` target, so the define is
+  never applied.
+- Changes to the fork fall into two sets, and they must be kept distinguishable:
+  **LSP-only** (guarded, will never be upstreamed) and **upstreamable**. The latter is
+  currently: the `err.stream` fix in `log.h`, uninitialised `Loc::Pos` members, the
+  `std::is_pod` → `is_standard_layout && is_trivial` fix in `hash.h` (`is_pod` is deprecated
+  in C++20), lexer/parser/`ast.cpp` error tolerance, the type-checker error tolerance in
+  `check.cpp`, the `pop_scope` warning fix, the `usage()` text in `main.cpp`, and the
+  `file(row, col)` → `file:row:col` location format in `loc.h` (a separate, purely cosmetic
+  change — terminal-clickable, but user-visible). The unmerged `origin/error-tolerance`
+  branch is relevant prior art.
 
 ## Definition of Done
 
@@ -242,10 +278,23 @@ Ordered. Keep status markers current.
    Guarded by [test/ninja-config.test.mjs](test/ninja-config.test.mjs),
    [test/optional-includes.test.mjs](test/optional-includes.test.mjs) and
    [test/detect-config.test.mjs](test/detect-config.test.mjs).
-5. **Clean up the artic fork** — guard all LSP-only additions behind `ENABLE_LSP`, and split
-   out the genuinely upstreamable fixes (chiefly the type-checker error tolerance that lets
-   later stages survive a failed earlier stage) so they can be PR'd to AnyDSL/artic.
-   The unmerged `origin/error-tolerance` branch is relevant prior art.
+5. **Clean up the artic fork** — *done*. Divergence from the merge base went from
+   **+645 / −89 across 19 files** to **+470 / −68 across 17 files** plus two fully
+   self-guarded new files. What was done:
+   - Deleted fork noise: `.gitmodules` (referenced a `lsp-framework` submodule that does not
+     exist) and `build.sh` (hardcoded `$HOME/repos/...`).
+   - Reverted pure churn: `include/artic/parser.h`, the `main.cpp` usage-text rewrite,
+     whitespace-only edits in `bind.cpp`, and debug leftovers (`// fn->dump();`).
+   - Extracted the LSP symbol index into `include/artic/name_map.h` + `src/name_map.cpp`,
+     both guarded in their entirety.
+   - Guarded the remaining LSP-only code in `bind.h`, `check.h`, `print.h`, `log.h`,
+     `bind.cpp`, `check.cpp` and `print.cpp`. See
+     [Working with the artic/ submodule](#working-with-the-artic-submodule) for the
+     conventions and the one documented exception (`ast.h`).
+   - Removed the dead `Node::print_node()` declaration — never defined, never called.
+   - Fixed a real regression the fork had introduced (see the `pop_scope` gotcha below).
+   The upstreamable set is listed under the submodule section; PR'ing it to AnyDSL/artic is
+   still open.
 6. **Cursor editor support** — make the extension installable and functional in Cursor
    (Open VSX packaging, `engines.vscode` range, avoid VS Code proprietary APIs).
 7. **Restore Linux support** — development has moved to Windows and Linux has regressed.
@@ -254,6 +303,16 @@ Ordered. Keep status markers current.
 
 ## Gotchas
 
+- **`NameBinder::pop_scope()` is where "unused identifier" is reported, so a wrong early-out
+  there disables the warning globally and silently.** The fork suppressed it for function
+  prototypes (which bind parameters but have no body to use them in) with
+  `if (auto fn = current_node->isa<ast::FnDecl>(); !fn || !fn->fn->body) ...`. `isa<>` returns
+  null for every node that is *not* an `FnDecl`, so `!fn` was true for block scopes, loops,
+  case arms and structs — i.e. the warning was suppressed everywhere except in real function
+  prototypes, the one place it was meant to be suppressed. Nothing failed; the diagnostic
+  just stopped existing. Guarded by the `unused local binding` case in
+  [test/source-diagnostics.test.mjs](test/source-diagnostics.test.mjs) with
+  [test/fixtures/diagnostics/src/unused_local.art](test/fixtures/diagnostics/src/unused_local.art).
 - **`publish_config_diagnostics()` may only clear what the current pass evaluated.**
   Every compile calls it with a fresh `ConfigLog`, and configs are cached, so that log is
   almost always empty. Clearing everything it does not mention meant that opening any `.art`

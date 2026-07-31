@@ -66,4 +66,21 @@ describe('source diagnostics', () => {
         assert.deepEqual(remaining, [],
             `diagnostics must be cleared after the fix, got ${JSON.stringify(remaining)}`);
     });
+
+    test('reports an unused local binding as a warning', async () => {
+        const uri = ws.fileUri('src', 'unused_local.art');
+        client.openDocument(uri, ws.read('src', 'unused_local.art'));
+        await client.settle();
+
+        // Not waitForDiagnostics: the file shares a project with type_error.art, so an
+        // empty publish for it has already been logged by the earlier tests.
+        const published = client.diagnosticsFor(uri);
+        const unused = published.filter(d => /unused identifier 'unused_local'/.test(d.message));
+        assert.equal(unused.length, 1,
+            `expected the unused-identifier warning, got ${JSON.stringify(published)}`);
+        assert.equal(unused[0].severity, 2, 'must be reported as a warning');
+        // `unused_local` sits on source line 8 (1-based), column 9.
+        assert.equal(unused[0].range.start.line, 7);
+        assert.equal(unused[0].range.start.character, 8);
+    });
 });
