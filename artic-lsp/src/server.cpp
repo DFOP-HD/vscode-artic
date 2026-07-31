@@ -9,11 +9,9 @@
 #include "workspace.h"
 #include "artic/log.h"
 #include "artic/ast.h"
-#include "artic/bind.h"
 #include "artic/print.h"
 #include "artic/types.h"
 #include "lsp/error.h"
-#include "lsp/nullable.h"
 
 #include <filesystem>
 #include <limits>
@@ -36,10 +34,6 @@ namespace fs = std::filesystem;
 
 namespace artic::ls {
 namespace {
-
-fs::path absolute_path(std::string_view path) {
-    return paths::canonical_path(fs::path(path));
-}
 
 void log_request(std::string_view name, const lsp::TextDocumentIdentifier& doc) {
     log::info("\n[LSP] <<< {} {}", name, doc.uri.path());
@@ -115,33 +109,20 @@ Server::FileType Server::get_file_type(const fs::path& file) {
 // -----------------------------------------------------------------------------
 
 
-namespace {
-
-struct InitOptions {
-    bool restart_from_crash = false;
-};
-
-InitOptions parse_initialize_options(const reqst::Initialize::Params& params) {
-    InitOptions data;
-
-    if (auto init = params.initializationOptions; init.has_value() && init->isObject()) {
-        const auto& obj = init->object();
-
-        if (auto val = obj.find("restartFromCrash"); val && val->isBoolean())
-            data.restart_from_crash = val->boolean();
-    }
-    return data;
-}
-
-} // anonymous namespace
-
 void Server::setup_events_initialization() {
     message_handler_.add<reqst::Initialize>([this](reqst::Initialize::Params&& params) -> reqst::Initialize::Result {
         log::info( "\n[LSP] <<< Initialize");
         
-        InitOptions init_data = parse_initialize_options(params);
+        bool restart_from_crash = false;
+        // Parse init options
+        if (auto init = params.initializationOptions; init.has_value() && init->isObject()) {
+            const auto& obj = init->object();
 
-        safe_mode_ = init_data.restart_from_crash;
+            if (auto val = obj.find("restartFromCrash"); val && val->isBoolean())
+                restart_from_crash = val->boolean();
+        }
+
+        safe_mode_ = restart_from_crash;
         workspace_ = std::make_unique<workspace::Workspace>();
         
         return reqst::Initialize::Result {
@@ -222,7 +203,7 @@ void Server::setup_events_modifications() {
     });
     message_handler_.add<notif::TextDocument_DidOpen>([this](notif::TextDocument_DidOpen::Params&& params) {
         log::info("\n[LSP] <<< TextDocument DidOpen");
-        auto path = absolute_path(params.textDocument.uri.path());
+        auto path = paths::canonical_path(params.textDocument.uri.path());
 
         if(get_file_type(path) == FileType::SourceFile) {
             ensure_compile(path.string());
@@ -237,7 +218,7 @@ void Server::setup_events_modifications() {
         log::info("");
         log::info("--------------------------------");
         log::info("[LSP] <<< TextDocument DidChange");
-        std::filesystem::path file = absolute_path(params.textDocument.uri.path());
+        std::filesystem::path file = paths::canonical_path(params.textDocument.uri.path());
         if(get_file_type(file) == FileType::ConfigFile) {
             // handled in didsave
             return;
@@ -249,7 +230,7 @@ void Server::setup_events_modifications() {
 
     message_handler_.add<notif::TextDocument_DidSave>([this](notif::TextDocument_DidSave::Params&& params) {
         log::info("\n[LSP] <<< TextDocument DidSave");
-        std::filesystem::path file = absolute_path(params.textDocument.uri.path());
+        std::filesystem::path file = paths::canonical_path(params.textDocument.uri.path());
         if(get_file_type(file) == FileType::ConfigFile) {
             workspace::config::ConfigLog log{};
             bool known = workspace_->on_config_changed(file, log);
@@ -268,7 +249,7 @@ void Server::setup_events_modifications() {
     });
     message_handler_.add<notif::Workspace_DidChangeWatchedFiles>([this](notif::Workspace_DidChangeWatchedFiles::Params&& params) {
         for(auto& change : params.changes) {
-            auto path = absolute_path(change.uri.path());
+            auto path = paths::canonical_path(change.uri.path());
 
             switch(change.type.index()) {
                 case lsp::FileChangeType::Created: 
@@ -423,7 +404,7 @@ lsp::SemanticTokens collect_semantic_tokens(
 void Server::setup_events_tokens() {
     // Semantic Tokens ----------------------------------------------------------------------
     message_handler_.add<reqst::TextDocument_SemanticTokens_Full>([this](lsp::SemanticTokensParams&& params) -> reqst::TextDocument_SemanticTokens_Full::Result {
-        auto file = absolute_path(params.textDocument.uri.path());
+        auto file = paths::canonical_path(params.textDocument.uri.path());
         log_request("TextDocument SemanticTokens_Full", params.textDocument);
         
         if(!has_compiled(file)) return nullptr;
@@ -434,7 +415,7 @@ void Server::setup_events_tokens() {
     });
 
     message_handler_.add<reqst::TextDocument_SemanticTokens_Range>([this](lsp::SemanticTokensRangeParams&& params) -> reqst::TextDocument_SemanticTokens_Range::Result {
-        auto file = absolute_path(params.textDocument.uri.path());
+        auto file = paths::canonical_path(params.textDocument.uri.path());
         log_request("TextDocument SemanticTokens_Range", params.textDocument, params.range);
 
         if(!has_compiled(file)) return nullptr;
@@ -620,7 +601,7 @@ void Server::setup_events_definitions() {
         log_request("TextDocument DocumentSymbol", params.textDocument);
 
         if (get_file_type(params.textDocument.uri.path()) != FileType::SourceFile) return nullptr;
-        auto file = absolute_path(params.textDocument.uri.path()).generic_string();
+        auto file = paths::canonical_path(params.textDocument.uri.path()).generic_string();
         ensure_compile(params.textDocument.uri.path());
         if (!compile || !compile->program) return nullptr;
 
@@ -1141,27 +1122,19 @@ void Server::setup_events_completion() {
                 });
             }
             
-            auto show_prim_type = [&](std::string_view prim){
+            static auto prim_types = std::vector<std::string_view> {
+                "bool", 
+                "i8", "i16", "i32", "i64", 
+                "u8", "u16", "u32", "u64", 
+                "f16", "f32", "f64", 
+                "simd", "mut", "super"
+            };
+            for (auto& prim : prim_types) {
                 lsp::CompletionItem item;
                 item.kind = lsp::CompletionItemKind::Keyword;
                 item.label = prim;
                 result.items.push_back(std::move(item));
-            };
-            show_prim_type("bool");
-            show_prim_type("i8");
-            show_prim_type("i16");
-            show_prim_type("i32");
-            show_prim_type("i64");
-            show_prim_type("u8");
-            show_prim_type("u16");
-            show_prim_type("u32");
-            show_prim_type("u64");
-            show_prim_type("f16");
-            show_prim_type("f32");
-            show_prim_type("f64");
-            show_prim_type("simd");
-            show_prim_type("mut");
-            show_prim_type("super");
+            }
             
             result.items.push_back(lsp::CompletionItem {
                 .label = "simd[...]",
@@ -1259,7 +1232,7 @@ void Server::compile_this_and_related_files(std::filesystem::path file, std::str
 }
 
 void Server::ensure_compile(std::string_view file_view) {
-    fs::path file = absolute_path(file_view);
+    fs::path file = paths::canonical_path(file_view);
     if(get_file_type(file) != FileType::SourceFile) {
         throw lsp::RequestError(lsp::Error::InvalidParams, "File is not an Artic source file");
     }
@@ -1376,7 +1349,7 @@ void Server::reload_workspace() {
 void Server::setup_events_other() {
 
     message_handler_.add<reqst::TextDocument_InlayHint>([this](reqst::TextDocument_InlayHint::Params&& params) -> reqst::TextDocument_InlayHint::Result {
-        fs::path file = absolute_path(params.textDocument.uri.path());
+        fs::path file = paths::canonical_path(params.textDocument.uri.path());
         log_request("TextDocument InlayHint", params.textDocument, params.range);
 
         // inlay hints are not allowed to trigger recompile as this is called right after document changed

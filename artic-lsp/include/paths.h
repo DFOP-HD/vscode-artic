@@ -20,6 +20,10 @@ namespace fs = std::filesystem;
 // semantic tokens, inlay hints and go-to-definition all silently return nothing.
 fs::path canonical_path(const fs::path& file);
 
+inline fs::path canonical_path(std::string_view file) {
+    return canonical_path(fs::path(file));
+}
+
 // Key used to look files up. On Windows paths are case-insensitive, so the key is
 // lowercased to avoid tracking the same file twice. It must never be used as the file's
 // identity: diagnostics are published under File::path, and a lowercased URI does not
@@ -27,7 +31,7 @@ fs::path canonical_path(const fs::path& file);
 fs::path lookup_key(const fs::path& file);
 
 // Resolves `path` against `base_dir`, expanding a leading `~/`.
-fs::path to_absolute_path(fs::path base_dir, std::string path);
+fs::path to_absolute_path(fs::path base_dir, std::string_view path);
 
 // .sln and .vcxproj are Windows-only formats and always spell paths with backslashes,
 // which are ordinary filename characters everywhere else.

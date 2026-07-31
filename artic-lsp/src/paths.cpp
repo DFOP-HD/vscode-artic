@@ -37,7 +37,7 @@ fs::path lookup_key(const fs::path& file) {
 }
 
 fs::path to_absolute_path(fs::path base_dir, std::string path) {
-    if (path.starts_with("/")) return canonical_path(path);
+    if (path.starts_with("/")) return canonical_path(std::string_view(path));
     if (path.starts_with("~/")) {
         // Unset on Windows unless the user exported it; leave the `~` literal in that case.
         if (const char* home = std::getenv("HOME")) {
