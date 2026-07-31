@@ -75,6 +75,10 @@ struct ConfigPath {
     // -- internal parse info --
     std::string raw_path_string;
     bool is_optional = false;
+
+    // Derived from another config (e.g. a project listed in a .sln) rather than written
+    // by the user. Problems with it are not the user's doing and are not reported.
+    bool is_implicit = false;
 };
 
 struct ConfigFile {
@@ -137,7 +141,8 @@ private:
     ConfigFile* instantiate_config(const ConfigPath& origin, config::ConfigLog& log);
     ConfigFile* instantiate_config_json(const ConfigPath& origin, config::ConfigLog& log);
     ConfigFile* instantiate_config_vcxproj(const ConfigPath& origin, config::ConfigLog& log);
-    ConfigFile* instantiate_config_ninja(const ConfigPath& origin, config::ConfigLog& log) { return nullptr; }
+    ConfigFile* instantiate_config_sln(const ConfigPath& origin, config::ConfigLog& log);
+    ConfigFile* instantiate_config_ninja(const ConfigPath& origin, config::ConfigLog& log);
 
     Project* discover_project_for_file(fs::path file, config::ConfigLog& log) {
         file = fs::weakly_canonical(file);

@@ -48,6 +48,11 @@ Create a workspace configuration file `artic.json` at the root of your workspace
 This configuration file tells the language server which files are associated with your project and should therefore be compiled together.
 This is essential to give you good diagnostics and 'go to definition' functionality
 
+If your project is already built with CMake, run **Artic: Detect workspace configuration** from the
+command palette. It scans the workspace for `.sln`, `build.ninja` and `.vcxproj` files that invoke
+artic and adds them to `artic.json` as optional includes, so the config stays valid before the first
+build.
+
 Example:
 
 ```json
@@ -78,6 +83,17 @@ Example:
     "include": [
         "../anydsl/runtime/artic.json",       // here: defines project runtime
         "../anydsl/artic-utils/artic.json",   // here: defines project artic-utils
+
+        // a Visual Studio project: the files are taken from its 'artic.exe ...' build command
+        "../build/my_kernel.vcxproj",
+
+        // a whole solution: expands to the .vcxproj files it lists.
+        // projects that do not invoke artic are skipped silently
+        "../build/anydsl.sln",
+
+        // a ninja build directory: every target whose command line invokes artic
+        // becomes a project named after the file it generates
+        "../build/build.ninja?",
 
         // include projects from global config 'artic-global.json' (path specified in extension settings). 
         // also active even when "<global>" is not explicitly specified

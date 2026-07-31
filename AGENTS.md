@@ -210,21 +210,58 @@ Ordered. Keep status markers current.
    `+ 1 files | total matches: 1 files:` against its `files` pattern. It is deliberate
    (an "N files matched" annotation) but it renders as noise in the Problems panel and the
    wording looks malformed. Decide whether it should be an inlay hint instead.
-3. **Support `.sln` files in the config** — today only `.vcxproj` can be listed; a solution
-   should be expandable to its projects. See `instantiate_config()` in
-   [artic-lsp/src/workspace.cpp](artic-lsp/src/workspace.cpp) and `parse_vcxproj()` in
-   [artic-lsp/src/config.cpp](artic-lsp/src/config.cpp).
-4. **Clean up the artic fork** — guard all LSP-only additions behind `ENABLE_LSP`, and split
+3. **Support `.sln` files in the config** — *done*. `"include": ["../build/x.sln"]` expands to
+   the `.vcxproj` files the solution lists. Solution folders (which reuse the `Project(...)`
+   syntax) are skipped, and so is any project without an `artic.exe` build command — a
+   CMake-generated solution is mostly `ZERO_CHECK`/`ALL_BUILD` noise, so those must not
+   produce diagnostics. That distinction is `ConfigPath::is_implicit`: an include the user
+   wrote is reported on, one derived from a solution is not. Projects are instantiated
+   lazily and the result is cached even when empty, so a solution with hundreds of entries
+   parses each `.vcxproj` at most once. See `parse_sln()` in
+   [artic-lsp/src/config.cpp](artic-lsp/src/config.cpp) and `instantiate_config_sln()` in
+   [artic-lsp/src/workspace.cpp](artic-lsp/src/workspace.cpp); guarded by
+   [test/sln-config.test.mjs](test/sln-config.test.mjs).
+4. **Support `build.ninja` and detect the configuration automatically** — *done*.
+   `parse_ninja()` in [artic-lsp/src/config.cpp](artic-lsp/src/config.cpp) turns every ninja
+   target whose `COMMAND =` line invokes artic into a project named after the generated file.
+   The command is split on ` && ` so the `cd /D <dir>` of CMake's `cmd.exe /C "..."` wrapper
+   becomes the base directory for relative source paths; the first artic invocation wins, and
+   arguments are taken until the first one starting with `-`. Paths containing spaces are not
+   supported, exactly as in `.vcxproj` files.
+   The extension command is now `artic.detectWorkspaceConfiguration` ("Detect workspace
+   configuration"). It scans for `.sln`, then `build.ninja`, then `.vcxproj`, keeping only
+   files that mention artic and skipping anything under a directory already covered by a
+   stronger match — otherwise a solution and the projects it lists both get included and every
+   project is reported as a duplicate. Detected entries are written as **optional** includes
+   (trailing `?`) because a build directory does not exist on a fresh checkout.
+   Guarded by [test/ninja-config.test.mjs](test/ninja-config.test.mjs) and
+   [test/optional-includes.test.mjs](test/optional-includes.test.mjs).
+5. **Clean up the artic fork** — guard all LSP-only additions behind `ENABLE_LSP`, and split
    out the genuinely upstreamable fixes (chiefly the type-checker error tolerance that lets
    later stages survive a failed earlier stage) so they can be PR'd to AnyDSL/artic.
    The unmerged `origin/error-tolerance` branch is relevant prior art.
-5. **Cursor editor support** — make the extension installable and functional in Cursor
+6. **Cursor editor support** — make the extension installable and functional in Cursor
    (Open VSX packaging, `engines.vscode` range, avoid VS Code proprietary APIs).
-6. **Restore Linux support** — development has moved to Windows and Linux has regressed.
+7. **Restore Linux support** — development has moved to Windows and Linux has regressed.
    Re-verify the build (`artic-lsp/build.sh`), the packaging scripts (`vscode/build-lsp.sh`,
    `vscode/package.sh`), path handling, and run the test suite there.
 
 ## Gotchas
+
+- **`publish_config_diagnostics()` may only clear what the current pass evaluated.**
+  Every compile calls it with a fresh `ConfigLog`, and configs are cached, so that log is
+  almost always empty. Clearing everything it does not mention meant that opening any `.art`
+  file wiped every config diagnostic milliseconds after it appeared — the Problems panel
+  looked clean while the config was broken. `ConfigLog::evaluated_files` (filled by
+  `scoped_file()`) records which configs a pass actually looked at; only those may be
+  cleared. Guarded by [test/optional-includes.test.mjs](test/optional-includes.test.mjs),
+  which opens a source file after the config and then asserts the error is still there.
+- **Optional includes (`"path?"`) mean "may be absent", not "ignore errors".** A missing
+  optional include is silent; one that exists but is broken is reported normally. The single
+  place that reports a missing include is the eager loop in `instantiate_config_json()` —
+  `Workspace::instantiate_config()` returns `nullptr` silently for a path that does not
+  exist, because the lazy lookup in `find_project_in_config_using_file()` reaches it again
+  later with no idea whether the include was optional.
 
 - **A file's identity is its canonicalised path string.** `workspace::canonical_path()` in
   [artic-lsp/src/workspace.cpp](artic-lsp/src/workspace.cpp) is the single place that

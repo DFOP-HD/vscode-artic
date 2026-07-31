@@ -109,4 +109,22 @@ describe('language features', () => {
         assert.ok(uris.includes(normalizeUri(mainUri)),
             `references must include the call site in main.art, got ${JSON.stringify(uris)}`);
     });
+
+    test('navigation does not recompile an already-compiled project', async () => {
+        // The server logs one "Compiling N file(s)" line per compilation run. A path
+        // identity mismatch makes `already_compiled` permanently false, which recompiled
+        // the whole project on every keystroke-triggered request.
+        const compiles = () => (client.stderr.match(/Compiling \d+ file\(s\)/g) ?? []).length;
+        const before = compiles();
+        assert.ok(before > 0, 'opening the document must have compiled the project once');
+
+        for (const needle of ['dot(v, v)', 'scale(a, 2.0)', 'add(a, b)']) {
+            await client.request('textDocument/definition', {
+                textDocument: { uri: mainUri },
+                position: locate(mainText, needle),
+            });
+        }
+        assert.equal(compiles(), before,
+            'navigation requests must reuse the existing compilation result');
+    });
 });

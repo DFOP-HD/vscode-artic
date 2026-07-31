@@ -1,10 +1,13 @@
 #include "config.h"
 
 #include "artic/log.h"
+#include <algorithm>
 #include <fstream>
 #include <filesystem>
 #include <iostream>
 #include <optional>
+#include <sstream>
+#include <unordered_set>
 #include <vector>
 #if !defined(_WIN32)
 // fnmatch is a POSIX function not available on Windows/MSVC/MinGW by default.
@@ -381,6 +384,197 @@ std::optional<Project> parse_vcxproj(const ConfigPath& origin, ConfigLog& log) {
         }
     }
     return std::nullopt;
+}
+
+std::vector<ConfigPath> parse_sln(const ConfigPath& origin, ConfigLog& log) {
+    /*
+    A solution lists one entry per project:
+
+        Project("{<type guid>}") = "<name>", "<relative\path.vcxproj>", "{<guid>}"
+
+    Solution folders reuse the same syntax but put the folder name in the path slot,
+    so only entries that actually name a .vcxproj are of interest.
+    */
+    std::ifstream is(origin.path);
+    if (!is) {
+        log.error("Could not read solution file " + origin.path.generic_string(), origin.raw_path_string);
+        return {};
+    }
+
+    std::vector<ConfigPath> projects;
+    std::unordered_set<std::string> seen;
+    std::string line;
+    while (std::getline(is, line)) {
+        if (!line.starts_with("Project(")) continue;
+
+        auto eq = line.find('=');
+        if (eq == std::string::npos) continue;
+
+        // The three quoted fields after '=' are name, path and guid.
+        std::vector<std::string> fields;
+        for (auto pos = eq; fields.size() < 3;) {
+            auto open = line.find('"', pos);
+            if (open == std::string::npos) break;
+            auto close = line.find('"', open + 1);
+            if (close == std::string::npos) break;
+            fields.push_back(line.substr(open + 1, close - open - 1));
+            pos = close + 1;
+        }
+        if (fields.size() < 2) continue;
+
+        auto& rel = fields[1];
+        auto ext = fs::path(rel).extension().string();
+        std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return std::tolower(c); });
+        if (ext != ".vcxproj") continue;
+
+        auto abs_path = to_absolute_path(origin.path.parent_path(), rel);
+        if (!seen.insert(abs_path.generic_string()).second) continue;
+        if (!fs::exists(abs_path)) {
+            log.warn("Solution references a project that does not exist: " + abs_path.generic_string(), rel);
+            continue;
+        }
+        projects.push_back(ConfigPath{ .path = abs_path, .raw_path_string = rel });
+    }
+
+    log::info("Found {} project(s) in solution {}", projects.size(), origin.path.generic_string());
+    return projects;
+}
+
+namespace {
+
+std::string to_lower(std::string s) {
+    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return std::tolower(c); });
+    return s;
+}
+
+// Ninja escapes `$`, `:`, space and newline with a leading `$` inside build statements.
+std::string ninja_unescape(std::string_view in) {
+    std::string out;
+    out.reserve(in.size());
+    for (size_t i = 0; i < in.size(); ++i) {
+        if (in[i] == '$' && i + 1 < in.size()) ++i;
+        out.push_back(in[i]);
+    }
+    return out;
+}
+
+std::string_view trim_left(std::string_view s) {
+    auto pos = s.find_first_not_of(" \t");
+    return pos == std::string_view::npos ? std::string_view{} : s.substr(pos);
+}
+
+// Commands are wrapped in `cmd.exe /C "..."`, so tokens carry stray quotes.
+std::string_view strip_quotes(std::string_view s) {
+    while (!s.empty() && (s.front() == '"' || s.front() == '\'')) s.remove_prefix(1);
+    while (!s.empty() && (s.back() == '"' || s.back() == '\'')) s.remove_suffix(1);
+    return s;
+}
+
+std::vector<std::string> split_whitespace(std::string_view s) {
+    std::vector<std::string> tokens;
+    std::istringstream ss{std::string(s)};
+    std::string token;
+    while (ss >> token) tokens.push_back(std::move(token));
+    return tokens;
+}
+
+bool is_artic_executable(std::string_view token) {
+    fs::path p(token);
+    auto ext = to_lower(p.extension().string());
+    return to_lower(p.stem().string()) == "artic" && (ext.empty() || ext == ".exe");
+}
+
+bool is_artic_source(std::string_view token) {
+    auto ext = to_lower(fs::path(token).extension().string());
+    return ext == ".art" || ext == ".impala";
+}
+
+} // anonymous namespace
+
+std::vector<Project> parse_ninja(const ConfigPath& origin, ConfigLog& log) {
+    /*
+    CMake writes one block per generated file:
+
+        build src/add.ll | ...: CUSTOM_COMMAND <deps>
+          COMMAND = cmd.exe /C "cd /D <build dir> && <path>\artic.exe a.impala b.art -emit-llvm -o out"
+
+    The build statement names the target, the COMMAND line names the sources. Everything
+    up to the first option is an input; the `cd` (if any) is what relative paths are
+    relative to. Paths containing spaces are not supported, exactly as in .vcxproj files.
+    */
+    std::ifstream is(origin.path);
+    if (!is) {
+        log.error("Could not read ninja file " + origin.path.generic_string(), origin.raw_path_string);
+        return {};
+    }
+
+    std::string line;
+    std::string logical;
+    // Ninja continues a line when it ends in `$`; the continuation's indent is dropped.
+    auto read_logical_line = [&]() -> bool {
+        logical.clear();
+        bool read_any = false;
+        while (std::getline(is, line)) {
+            read_any = true;
+            if (!line.empty() && line.back() == '\r') line.pop_back();
+            bool continued = !line.empty() && line.back() == '$';
+            if (continued) line.pop_back();
+            if (logical.empty()) logical = line;
+            else logical.append(trim_left(line));
+            if (!continued) break;
+        }
+        return read_any;
+    };
+
+    std::vector<Project> projects;
+    std::string target;
+    while (read_logical_line()) {
+        std::string_view sv = logical;
+        if (sv.starts_with("build ")) {
+            auto tokens = split_whitespace(sv.substr(strlen("build ")));
+            target = tokens.empty() ? "" : ninja_unescape(tokens.front());
+            if (target.ends_with(':')) target.pop_back();
+            continue;
+        }
+
+        auto trimmed = trim_left(sv);
+        if (!trimmed.starts_with("COMMAND = ") || target.empty()) continue;
+        auto command = trimmed.substr(strlen("COMMAND = "));
+
+        fs::path cwd = origin.path.parent_path();
+        std::vector<fs::path> files;
+        for (size_t pos = 0; pos <= command.size();) {
+            auto next = command.find(" && ", pos);
+            auto segment = command.substr(pos, next == std::string_view::npos ? std::string_view::npos : next - pos);
+            pos = next == std::string_view::npos ? command.size() + 1 : next + 4;
+
+            auto tokens = split_whitespace(segment);
+            for (auto& token : tokens) token = std::string(strip_quotes(token));
+
+            if (auto it = std::find(tokens.begin(), tokens.end(), "cd"); it != tokens.end()) {
+                if (++it != tokens.end() && to_lower(*it) == "/d") ++it;
+                if (it != tokens.end()) cwd = fs::path(*it);
+            }
+
+            auto exe = std::find_if(tokens.begin(), tokens.end(), is_artic_executable);
+            if (exe == tokens.end()) continue;
+            for (auto it = exe + 1; it != tokens.end() && !it->starts_with("-"); ++it) {
+                if (is_artic_source(*it)) files.push_back(to_absolute_path(cwd, *it));
+            }
+            break; // as with .vcxproj, the first artic invocation wins
+        }
+
+        if (files.empty()) continue;
+        Project p;
+        p.name = target;
+        p.root_dir = origin.path.parent_path();
+        p.origin = origin.path;
+        p.files = std::move(files);
+        projects.push_back(std::move(p));
+    }
+
+    log::info("Found {} artic target(s) in ninja file {}", projects.size(), origin.path.generic_string());
+    return projects;
 }
 
 } // config

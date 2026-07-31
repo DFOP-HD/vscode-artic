@@ -79,7 +79,8 @@ Server::FileType Server::get_file_type(const fs::path& file) {
     // is concerned and has to be matched on the filename instead.
     if (file.filename() == ".artic-lsp") return FileType::ConfigFile;
     auto ext = file.extension();
-    return ext == ".json" || ext == ".ninja" || ext == ".vcxproj" ? FileType::ConfigFile : FileType::SourceFile;
+    return ext == ".json" || ext == ".ninja" || ext == ".vcxproj" || ext == ".sln"
+        ? FileType::ConfigFile : FileType::SourceFile;
 }
 
 // lsp-framework's FileUri::fromPath() renders the path with u8string() rather than
@@ -1383,12 +1384,17 @@ void Server::publish_config_diagnostics(const workspace::config::ConfigLog& log)
     };
 
     // Clear files that were reported last time but are clean now, otherwise the editor
-    // keeps displaying diagnostics that no longer exist.
+    // keeps displaying diagnostics that no longer exist. Only files this pass actually
+    // re-evaluated may be cleared: configs are cached, so a pass that merely compiles a
+    // source file says nothing about them and must leave their diagnostics standing.
+    std::set<fs::path> still_published;
     for (const auto& file : published_config_diagnostics_) {
-        if (!fileDiags.contains(file)) publish(file, {});
+        if (fileDiags.contains(file)) continue;
+        if (log.evaluated_files.contains(file)) publish(file, {});
+        else still_published.insert(file);
     }
 
-    published_config_diagnostics_.clear();
+    published_config_diagnostics_ = std::move(still_published);
     for(auto& [file, diags] : fileDiags) {
         published_config_diagnostics_.insert(file);
         publish(file, diags);

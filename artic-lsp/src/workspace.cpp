@@ -89,11 +89,16 @@ ConfigFile* Workspace::instantiate_config(const ConfigPath& origin, config::Conf
     if(configs_.contains(o.path)) {
         return configs_.at(o.path).get();
     }
+    // A missing file is reported where the include was written, by whoever knows whether
+    // it was optional. Parsing it here would blame the file that does not exist.
+    if(!fs::exists(o.path)) return nullptr;
+
     // `.artic-lsp` is a dotfile and therefore has no extension; match the filename first.
     if (o.path.filename() == ".artic-lsp") return instantiate_config_json(o, log);
     if (o.path.has_extension()) {
         if(o.path.extension() == ".json") return instantiate_config_json(o, log);
         if(o.path.extension() == ".vcxproj") return instantiate_config_vcxproj(o, log);
+        if(o.path.extension() == ".sln") return instantiate_config_sln(o, log);
         if(o.path.extension() == ".ninja") return instantiate_config_ninja(o, log);
     }
 
@@ -108,22 +113,60 @@ ConfigFile* Workspace::instantiate_config(const ConfigPath& origin, config::Conf
 ConfigFile* Workspace::instantiate_config_vcxproj(const ConfigPath& origin, config::ConfigLog& log) {
     auto ctx = log.scoped_file(origin.path);
     auto project = config::parse_vcxproj(origin, log);
+
+    ConfigFile cfg{ .path = origin.path };
     if(!project) {
-        log.error("Failed to parse vcxproj file");
-        return nullptr;
+        // A solution pulls in every project it lists, most of which have nothing to do
+        // with artic, so this is only a problem when the user asked for this file by name.
+        if(!origin.is_implicit) {
+            log.error("Failed to parse vcxproj file");
+            return nullptr;
+        }
+    } else if(projects_.contains(project->name)) {
+        if(!origin.is_implicit)
+            log.warn("ignoring duplicate definition of " + project->name + " in " + project->origin.generic_string(), project->name);
+    } else {
+        projects_[project->name] = arena_->make_ptr<Project>(*project); // copy
+        cfg.projects.push_back(project->name);
     }
-    if(projects_.contains(project->name)) {
-        log.warn("ignoring duplicate definition of " + project->name + " in " + project->origin.generic_string(), project->name);
-        return nullptr;
+
+    // Cached even when nothing was found, so a large solution parses each project once.
+    configs_[origin.path] = arena_->make_ptr<ConfigFile>(std::move(cfg));
+    return configs_.at(origin.path).get();
+}
+
+ConfigFile* Workspace::instantiate_config_sln(const ConfigPath& origin, config::ConfigLog& log) {
+    auto ctx = log.scoped_file(origin.path);
+
+    // The projects are only turned into configs when something actually looks for a
+    // file in them: a CMake-generated solution can list hundreds of them.
+    ConfigFile cfg{ .path = origin.path };
+    for (auto& project : config::parse_sln(origin, log)) {
+        project.is_implicit = true;
+        cfg.includes.push_back(std::move(project));
     }
-    projects_[project->name] = arena_->make_ptr<Project>(*project); // copy
+    configs_[origin.path] = arena_->make_ptr<ConfigFile>(std::move(cfg));
+    return configs_.at(origin.path).get();
+}
 
-    ConfigFile cfg{
-        .path = origin.path,
-        .projects = {project->name},
-    };
-    configs_[origin.path] = arena_->make_ptr<ConfigFile>(cfg);
+ConfigFile* Workspace::instantiate_config_ninja(const ConfigPath& origin, config::ConfigLog& log) {
+    auto ctx = log.scoped_file(origin.path);
 
+    ConfigFile cfg{ .path = origin.path };
+    for (auto& project : config::parse_ninja(origin, log)) {
+        auto name = project.name;
+        if(projects_.contains(name)) {
+            if(!origin.is_implicit)
+                log.warn("ignoring duplicate definition of " + name + " in " + project.origin.generic_string(), name);
+            continue;
+        }
+        cfg.projects.push_back(name);
+        projects_[name] = arena_->make_ptr<Project>(std::move(project));
+    }
+    if(cfg.projects.empty() && !origin.is_implicit)
+        log.warn("No artic build commands found in " + origin.path.filename().generic_string());
+
+    configs_[origin.path] = arena_->make_ptr<ConfigFile>(std::move(cfg));
     return configs_.at(origin.path).get();
 }
 
@@ -147,18 +190,14 @@ ConfigFile* Workspace::instantiate_config_json(const ConfigPath& origin, config:
     
     // recurse included configs
     for (const auto& include : parser.config.includes) {
-        if(fs::exists(include.path)){
-            auto included_config = instantiate_config(include, log);
-            if(!included_config) {
-                log.error("Failed to include config " + include.path.generic_string(), include.raw_path_string);
-            }
-        } else {
-            if(include.is_optional) {
-                // optional includes are allowed to be absent
-            } else {
+        if(!fs::exists(include.path)) {
+            if(!include.is_optional)
                 log.error("Config file does not exist: \"" + include.path.generic_string() + "\"", include.raw_path_string);
-            }
+            continue;
         }
+        // Whatever goes wrong below reports itself; a generic "failed to include" on top
+        // of that would just duplicate the message.
+        instantiate_config(include, log);
     }
 
     // fix circular project dependencies

@@ -6,12 +6,19 @@
 #include <vector>
 #include <string>
 #include <optional>
+#include <set>
 #include <unordered_set>
 #include <filesystem>
 
 namespace artic::ls::workspace::config {
 
 std::optional<Project> parse_vcxproj(const ConfigPath& origin, ConfigLog& log);
+
+// Absolute paths of the .vcxproj files referenced by a Visual Studio solution.
+std::vector<ConfigPath> parse_sln(const ConfigPath& origin, ConfigLog& log);
+
+// One project per ninja target whose command line invokes the artic compiler.
+std::vector<Project> parse_ninja(const ConfigPath& origin, ConfigLog& log);
     
 struct ConfigLog {
     using Severity = lsp::DiagnosticSeverity;
@@ -28,6 +35,11 @@ struct ConfigLog {
     fs::path file_context;
     std::vector<Message> messages;
 
+    // Config files this pass actually looked at. Configs are cached, so most passes
+    // evaluate nothing; without this the publisher would clear the diagnostics of every
+    // config simply because the current pass had nothing to say about them.
+    std::set<fs::path> evaluated_files;
+
     // Restores the previous context on destruction. Config parsing recurses through
     // includes, so a plain assignment would leave later messages attributed to
     // whichever config happened to be visited last.
@@ -35,6 +47,7 @@ struct ConfigLog {
         FileContextScope(ConfigLog& log, fs::path file)
             : log_(log), previous_(std::move(log.file_context))
         {
+            log_.evaluated_files.insert(file);
             log_.file_context = std::move(file);
         }
         FileContextScope(const FileContextScope&) = delete;

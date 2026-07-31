@@ -64,8 +64,8 @@
         "category": "Artic"
       },
       {
-        "command": "artic.discoverVcxprojConfigs",
-        "title": "Discover vcxproj Configs",
+        "command": "artic.detectWorkspaceConfiguration",
+        "title": "Detect workspace configuration",
         "category": "Artic"
       },
       {

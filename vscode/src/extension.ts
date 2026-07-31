@@ -81,6 +81,11 @@ function startClient(context: vscode.ExtensionContext) {
                     vscode.workspace.createFileSystemWatcher('**/*.impala'),
                     vscode.workspace.createFileSystemWatcher('**/artic.json'),
                     vscode.workspace.createFileSystemWatcher('**/.artic-lsp'),
+                    // Build files can be used as configuration, so a rebuild that adds or
+                    // removes sources must invalidate the workspace too.
+                    vscode.workspace.createFileSystemWatcher('**/*.sln'),
+                    vscode.workspace.createFileSystemWatcher('**/*.vcxproj'),
+                    vscode.workspace.createFileSystemWatcher('**/build.ninja'),
                 ],
                 configurationSection: 'artic'
             },
@@ -152,32 +157,58 @@ function toPosixRelativePath(fromDir: string, toFile: string): string {
     return path.relative(fromDir, toFile).replace(/\\/g, '/');
 }
 
-async function findArticVcxprojFiles(workspaceFolder: vscode.WorkspaceFolder): Promise<vscode.Uri[]> {
-    const vcxprojFiles = await vscode.workspace.findFiles(
-        new vscode.RelativePattern(workspaceFolder, '**/*.vcxproj'),
-        workspaceConfigExcludeGlob,
-    );
+// Build systems whose output can be used as an artic project configuration, in the order
+// they are preferred. A solution already lists its projects, so once one is found the
+// .vcxproj files below it are redundant and would only produce duplicate-project warnings.
+const workspaceConfigPatterns = ['**/*.sln', '**/build.ninja', '**/*.vcxproj'];
 
-    const matches: vscode.Uri[] = [];
-    for (const file of vcxprojFiles) {
-        try {
-            const content = toUtf8(await vscode.workspace.fs.readFile(file));
-            if (content.toLowerCase().includes('artic')) {
-                matches.push(file);
+/**
+ * Build files in the workspace that mention artic, so they can be used as configuration.
+ * Only the strongest match per directory tree is kept.
+ */
+async function findWorkspaceConfigCandidates(workspaceFolder: vscode.WorkspaceFolder): Promise<vscode.Uri[]> {
+    const kept: vscode.Uri[] = [];
+    const coveredDirs: string[] = [];
+
+    for (const pattern of workspaceConfigPatterns) {
+        const found = await vscode.workspace.findFiles(
+            new vscode.RelativePattern(workspaceFolder, pattern),
+            workspaceConfigExcludeGlob,
+        );
+        found.sort((left, right) => left.fsPath.localeCompare(right.fsPath));
+
+        const matched: vscode.Uri[] = [];
+        for (const file of found) {
+            const dir = path.dirname(file.fsPath);
+            if (coveredDirs.some((covered) => dir === covered || dir.startsWith(covered + path.sep))) {
+                continue;
             }
-        } catch (error) {
-            console.warn(`Failed to inspect vcxproj file ${file.fsPath}:`, error);
+            try {
+                const content = toUtf8(await vscode.workspace.fs.readFile(file));
+                if (content.toLowerCase().includes('artic')) {
+                    matched.push(file);
+                }
+            } catch (error) {
+                console.warn(`Failed to inspect build file ${file.fsPath}:`, error);
+            }
+        }
+
+        for (const file of matched) {
+            kept.push(file);
+            coveredDirs.push(path.dirname(file.fsPath));
         }
     }
 
-    matches.sort((left, right) => left.fsPath.localeCompare(right.fsPath));
-    return matches;
+    kept.sort((left, right) => left.fsPath.localeCompare(right.fsPath));
+    return kept;
 }
 
-async function updateWorkspaceConfigIncludes(workspaceFolder: vscode.WorkspaceFolder, vcxprojFiles: vscode.Uri[]): Promise<{ created: boolean; added: number; configPath: string; }> {
+async function updateWorkspaceConfigIncludes(workspaceFolder: vscode.WorkspaceFolder, buildFiles: vscode.Uri[]): Promise<{ created: boolean; added: number; configPath: string; }> {
     const configUri = vscode.Uri.joinPath(workspaceFolder.uri, 'artic.json');
     const configDir = path.dirname(configUri.fsPath);
-    const discoveredIncludes = vcxprojFiles.map((file) => toPosixRelativePath(configDir, file.fsPath));
+    // Detected files live in a build directory, which does not exist on a fresh checkout.
+    // Writing them as optional (trailing `?`) keeps the config valid until the build runs.
+    const discoveredIncludes = buildFiles.map((file) => `${toPosixRelativePath(configDir, file.fsPath)}?`);
 
     let created = false;
     let config: Record<string, unknown>;
@@ -204,13 +235,17 @@ async function updateWorkspaceConfigIncludes(workspaceFolder: vscode.WorkspaceFo
     }
 
     const existingIncludes = Array.isArray(includeValue)
-        ? includeValue
+        ? includeValue as string[]
         : [];
+
+    // An include the user already wrote as required must not be duplicated as optional.
+    const alreadyIncluded = new Set(existingIncludes.map((value) => value.replace(/\?$/, '')));
 
     const mergedIncludes = [...existingIncludes];
     let added = 0;
     for (const includePath of discoveredIncludes) {
-        if (!mergedIncludes.includes(includePath)) {
+        if (!alreadyIncluded.has(includePath.slice(0, -1))) {
+            alreadyIncluded.add(includePath.slice(0, -1));
             mergedIncludes.push(includePath);
             added += 1;
         }
@@ -229,24 +264,24 @@ async function updateWorkspaceConfigIncludes(workspaceFolder: vscode.WorkspaceFo
     };
 }
 
-async function discoverVcxprojConfigs(): Promise<void> {
+async function detectWorkspaceConfiguration(): Promise<void> {
     const workspaceFolders = vscode.workspace.workspaceFolders;
     if (!workspaceFolders || workspaceFolders.length === 0) {
-        vscode.window.showWarningMessage('Open a workspace folder before discovering vcxproj files.');
+        vscode.window.showWarningMessage('Open a workspace folder before detecting the Artic configuration.');
         return;
     }
 
     await vscode.window.withProgress({
         location: vscode.ProgressLocation.Notification,
-        title: 'Discovering Artic vcxproj files',
+        title: 'Detecting Artic workspace configuration',
         cancellable: false,
     }, async (progress) => {
         const summaries: string[] = [];
         for (const workspaceFolder of workspaceFolders) {
             progress.report({ message: `Scanning ${workspaceFolder.name}` });
-            const vcxprojFiles = await findArticVcxprojFiles(workspaceFolder);
-            const result = await updateWorkspaceConfigIncludes(workspaceFolder, vcxprojFiles);
-            summaries.push(`${workspaceFolder.name}: ${vcxprojFiles.length} matches, ${result.added} added${result.created ? ', created artic.json' : ''}`);
+            const buildFiles = await findWorkspaceConfigCandidates(workspaceFolder);
+            const result = await updateWorkspaceConfigIncludes(workspaceFolder, buildFiles);
+            summaries.push(`${workspaceFolder.name}: ${buildFiles.length} build files, ${result.added} added${result.created ? ', created artic.json' : ''}`);
         }
 
         vscode.window.showInformationMessage(summaries.join(' | '));
@@ -266,15 +301,15 @@ export function activate(context: vscode.ExtensionContext) {
     });
     context.subscriptions.push(restartCommand);
 
-    const discoverVcxprojCommand = vscode.commands.registerCommand('artic.discoverVcxprojConfigs', async () => {
+    const detectConfigCommand = vscode.commands.registerCommand('artic.detectWorkspaceConfiguration', async () => {
         try {
-            await discoverVcxprojConfigs();
+            await detectWorkspaceConfiguration();
         } catch (error: any) {
-            vscode.window.showErrorMessage(`Failed to discover vcxproj files: ${error.message}`);
-            console.error('Discover vcxproj configs error:', error);
+            vscode.window.showErrorMessage(`Failed to detect the workspace configuration: ${error.message}`);
+            console.error('Detect workspace configuration error:', error);
         }
     });
-    context.subscriptions.push(discoverVcxprojCommand);
+    context.subscriptions.push(detectConfigCommand);
 
     const debugAstCommand = vscode.commands.registerCommand('artic.debugAst', async () => {
         try {
