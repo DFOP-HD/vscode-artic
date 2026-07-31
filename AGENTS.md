@@ -110,6 +110,42 @@ artic-lsp/buildGcc/bin/artic.exe test/fixtures/<project>/*.art
 
 When writing Artic code, follow [.github/skills/artic-language/SKILL.md](.github/skills/artic-language/SKILL.md).
 
+## Packaging and CI
+
+One VSIX carries **both** server binaries (`vscode/build/bin/artic-lsp` and
+`artic-lsp.exe`); `package.json`'s `files` list includes `build/bin/**`, and
+[vscode/src/server-path.ts](vscode/src/server-path.ts) picks the right one at startup.
+A universal package was chosen over `vsce package --target <platform>` because it is one
+file to publish, and because it survives Remote-WSL, where the extension host is Linux while
+the editor is Windows.
+
+- **`resolveServerPath()` order is: `artic.serverPath` setting, bundled binary, `PATH`.**
+  A setting that points at a file that no longer exists must *not* shadow the bundled
+  binary. Guarded by [test/server-path.test.mjs](test/server-path.test.mjs), which fakes the
+  host so no filesystem or platform is needed.
+- **`vsce` drops POSIX permissions from every packaged file when it runs on Windows.**
+  A VSIX built on Windows therefore ships the Linux binary without its executable bit.
+  The release workflow packages on `ubuntu-latest` for that reason, and
+  `resolveServerPath()` re-adds the bit defensively.
+- **`actions/upload-artifact` also loses the executable bit** (it zips its input), so the
+  package job re-runs `chmod +x` on the downloaded Linux binary.
+- Local `vscode/package.sh` / `build-lsp.ps1` stage the **host** platform's binary only.
+  Neither deletes the other platform's file, so running both leaves a universal
+  `vscode/build/bin/` behind. `vscode/publish.sh` no longer builds anything: it bumps the
+  version, tags and pushes, and [.github/workflows/release.yml](.github/workflows/release.yml)
+  does the rest.
+- [.github/workflows/ci.yml](.github/workflows/ci.yml) runs the whole Definition of Done on
+  push and PR: build + `ctest` + `node --test` + `npm audit` on Linux (Ninja/GCC) *and*
+  Windows (`Visual Studio 17 2022`), plus the no-`ENABLE_LSP` build on Linux. The two
+  toolchains are the point — the `u8string()` and drive-letter bugs below were both
+  single-toolchain bugs that a one-OS CI would have missed.
+- **`npm ci` must run before `node --test`** in CI: `detect-config.test.mjs` and
+  `server-path.test.mjs` bundle TypeScript with the esbuild in `vscode/node_modules`.
+- `half` is fetched from an unpinned SourceForge `files/latest/download` URL — the least
+  reproducible step in the build. CI caches `.deps/*-src` and `.deps/*-subbuild` keyed on the
+  hash of `artic-lsp/cmake/Dependencies.cmake` to keep it off the critical path. If CI starts
+  failing at configure time, suspect that URL first.
+
 ## Working with the `artic/` submodule
 
 - It is intentionally checked out on branch `master`, not detached, because we commit to it.
@@ -166,13 +202,21 @@ endif()
   Verify both, every time:
 
 ```powershell
-cmake --build artic-lsp/buildNoLsp --parallel      # source dir: artic-lsp/build-nolsp-src
-ctest --test-dir artic-lsp/buildNoLsp -E "^thorin_"
+cmake -S artic-lsp/nolsp -B artic-lsp/build-nolsp -G Ninja -D CMAKE_BUILD_TYPE=Release `
+      -D CMAKE_C_COMPILER=gcc -D CMAKE_CXX_COMPILER=g++ `
+      -D Thorin_DIR="$PWD/artic-lsp/buildGcc/share/anydsl/cmake" `
+      -D Half_DIR="$PWD/artic-lsp/buildGcc/_deps/half-src/include"
+cmake --build artic-lsp/build-nolsp --parallel
+ctest --test-dir artic-lsp/build-nolsp -E "^thorin_"
 ```
 
-  `artic-lsp/build-nolsp-src/CMakeLists.txt` is a throwaway project that does
-  `add_subdirectory(../../artic artic)` **without** an `artic-lsp` target, so the define is
-  never applied.
+  [artic-lsp/nolsp/CMakeLists.txt](artic-lsp/nolsp/CMakeLists.txt) is a throwaway project that
+  does `add_subdirectory(../../artic artic)` **without** an `artic-lsp` target, so the define
+  is never applied. It fetches nothing — point `Thorin_DIR`/`Half_DIR` at an already
+  configured `artic-lsp` build tree. It is tracked (an earlier `build-nolsp-src/` was not:
+  `.gitignore` has `build*/`), so CI runs exactly the same check —
+  see the *Build artic without ENABLE_LSP* step in
+  [.github/workflows/ci.yml](.github/workflows/ci.yml).
 - Changes to the fork fall into two sets, and they must be kept distinguishable:
   **LSP-only** (guarded, will never be upstreamed) and **upstreamable**. The latter is
   currently: the `err.stream` fix in `log.h`, uninitialised `Loc::Pos` members, the
@@ -318,8 +362,19 @@ Ordered. Keep status markers current.
      `ContinueExpr::infer` reporting `"break expression"` (copy-paste from `BreakExpr`).
    The upstreamable set is listed under the submodule section; PR'ing it to AnyDSL/artic is
    still open.
-6. **Cursor editor support** — make the extension installable and functional in Cursor
-   (Open VSX packaging, `engines.vscode` range, avoid VS Code proprietary APIs).
+6. **Cursor editor support** — *done, except for a marketplace listing*. The blocker was never
+   an API one: `engines.vscode: ^1.75.0` is satisfied by every current Cursor, and the
+   extension uses no proprietary or proposed API (only `workspace`, `window`, `commands`,
+   `Uri`, `RelativePattern`, `FileSystemError`). **The real bug was that the published VSIX
+   contained a Linux ELF binary only, and the PATH fallback shelled out to `which` — so on
+   Windows the extension has never worked, in Cursor *or* VS Code.** Fixed by
+   [vscode/src/server-path.ts](vscode/src/server-path.ts) plus the cross-platform release
+   build; see [Packaging and CI](#packaging-and-ci). The owner declined publishing to the
+   Visual Studio Marketplace and to Open VSX, so the documented install route is
+   `cursor --install-extension artic-language-server-<version>.vsix`, which works.
+   Whether Cursor can reach the Microsoft Marketplace at all is answered by its
+   `product.json` `extensionsGallery.serviceUrl`; it points at Open VSX, so a listing would
+   require an Eclipse account and a signed Publisher Agreement.
 7. **Restore Linux support** — development has moved to Windows and Linux has regressed.
    Re-verify the build (`artic-lsp/build.sh`), the packaging scripts (`vscode/build-lsp.sh`,
    `vscode/package.sh`), path handling, and run the test suite there.

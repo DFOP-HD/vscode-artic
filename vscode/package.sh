@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 
 # Package the Artic VS Code extension with a bundled Artic LSP binary
-#!/usr/bin/env bash
-
-# Package the Artic VS Code extension with a bundled Artic LSP binary
 # - Builds the C++ language server
-# - Copies the binary into the extension under vscode-client/artic-lsp/build/bin/
+# - Copies the binary into the extension under vscode/build/bin/
 # - Compiles the extension
 # - Packages a .vsix using vsce
+#
+# This stages the host platform's binary only. A release VSIX carrying both the Linux
+# and the Windows server is built by .github/workflows/release.yml.
 
 set -euo pipefail
 
@@ -32,7 +32,7 @@ npm run package
 VSIX_FILE=$(ls -1 artic-language-server-*.vsix | tail -n 1 || true)
 popd >/dev/null
 
-if [[ "$OS" == "Windows_NT" ]]; then
+if [[ "${OS:-}" == "Windows_NT" ]]; then
   CODE_CMD="code.cmd --install-extension"
 else
   CODE_CMD="code --install-extension"

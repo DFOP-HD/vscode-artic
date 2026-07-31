@@ -1,0 +1,89 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux
+            os: ubuntu-latest
+            generator: Ninja
+          # MSBuild locates the Windows SDK by itself; Ninja with MSVC needs a vcvars
+          # environment, which has been unreliable on this project's machines.
+          - name: windows
+            os: windows-latest
+            generator: Visual Studio 17 2022
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Ninja
+        if: matrix.os == 'ubuntu-latest'
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # thorin, lsp-framework, nlohmann_json and half are downloaded at configure time.
+      # half comes from a SourceForge "latest/download" URL, which is the least reliable
+      # step in the whole build, so keep it off the critical path where possible.
+      - name: Cache fetched dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            artic-lsp/build/_deps/*-src
+            artic-lsp/build/_deps/*-subbuild
+          key: deps-${{ matrix.os }}-${{ hashFiles('artic-lsp/cmake/Dependencies.cmake') }}
+
+      - name: Configure
+        run: cmake -S artic-lsp -B artic-lsp/build -G "${{ matrix.generator }}" -D CMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build artic-lsp/build --target artic-lsp artic --config Release --parallel
+
+      - name: Artic compiler test suite
+        run: ctest --test-dir artic-lsp/build -C Release -E "^thorin_" --output-on-failure
+
+      - name: Install extension dependencies
+        working-directory: vscode
+        run: npm ci
+
+      - name: Compile the extension
+        working-directory: vscode
+        run: npm run compile
+
+      - name: Audit extension dependencies
+        working-directory: vscode
+        run: npm audit
+
+      # Must run after `npm ci`: two suites bundle TypeScript from vscode/src with esbuild.
+      - name: Language server test suite
+        run: node --test "test/*.test.mjs"
+
+      # The standalone compiler has to keep building without ENABLE_LSP. It reuses the
+      # dependencies the main build already fetched, so this is cheap.
+      - name: Build artic without ENABLE_LSP
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          cmake -S artic-lsp/nolsp -B artic-lsp/build-nolsp -G Ninja \
+            -D CMAKE_BUILD_TYPE=Release \
+            -D Thorin_DIR="$GITHUB_WORKSPACE/artic-lsp/build/share/anydsl/cmake" \
+            -D Half_DIR="$GITHUB_WORKSPACE/artic-lsp/build/_deps/half-src/include"
+          cmake --build artic-lsp/build-nolsp --parallel
+          ctest --test-dir artic-lsp/build-nolsp -E "^thorin_" --output-on-failure

@@ -2,9 +2,10 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as os from 'os';
 import { LanguageClient, LanguageClientOptions, ServerOptions, TransportKind, State, Trace } from 'vscode-languageclient/node';
-import { execSync } from 'child_process';
-import { existsSync } from 'fs';
+import { execFileSync } from 'child_process';
+import { chmodSync, existsSync, statSync } from 'fs';
 import { BuildFile, selectWorkspaceConfigFiles } from './detect';
+import { ServerPathHost, resolveServerPath } from './server-path';
 
 let client: LanguageClient | undefined = undefined;
 let expectedStop = false;
@@ -27,29 +28,33 @@ const workspaceConfigTemplate = `{
 
 const workspaceConfigExcludeGlob = '**/{.git,.vs,node_modules,out,dist}/**';
 
-// Config > Bundled > PATH
+const serverPathHost: ServerPathHost = {
+    platform: os.platform(),
+    exists: existsSync,
+    lookupOnPath(command) {
+        const lookup = os.platform() === 'win32' ? 'where' : 'which';
+        try {
+            const first = execFileSync(lookup, [command], { encoding: 'utf8' }).split(/\r?\n/)[0].trim();
+            return first || undefined;
+        } catch {
+            return undefined;
+        }
+    },
+    makeExecutable(file) {
+        try {
+            const mode = statSync(file).mode;
+            if ((mode & 0o111) !== 0o111) {
+                chmodSync(file, mode | 0o755);
+            }
+        } catch {
+            // Leave it to the spawn attempt, which reports a better error.
+        }
+    },
+};
+
 function findArticBinary(): string {
-    const config = vscode.workspace.getConfiguration('artic');
-    let serverPath = config.get<string>('serverPath', '');
-    if (serverPath && existsSync(serverPath)) {
-        return serverPath;
-    }
-
-    const bundled = os.platform() ==='win32' 
-                        ? path.join(__dirname, '..', 'build', 'bin', 'artic-lsp.exe')
-                        : path.join(__dirname, '..', 'build', 'bin', 'artic-lsp');
-    if (existsSync(bundled)) {
-        return bundled;
-    }
-
-    try {
-        execSync('which artic-lsp', { stdio: 'ignore' });
-        return 'artic-lsp';
-    } catch {
-        // continue
-    }
-
-    throw new Error('Artic binary not found. Packaged binary missing and none found in settings or PATH.');
+    const configured = vscode.workspace.getConfiguration('artic').get<string>('serverPath', '');
+    return resolveServerPath(configured, path.join(__dirname, '..'), serverPathHost);
 }
 
 function startClient(context: vscode.ExtensionContext) {

@@ -1,0 +1,100 @@
+name: Release
+
+# Builds one VSIX that carries both the Linux and the Windows server binary, so a single
+# file works in VS Code and Cursor on either platform. The extension picks the right one
+# at startup (see vscode/src/server-path.ts).
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  server:
+    name: server (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x64
+            os: ubuntu-latest
+            generator: Ninja
+            binary: artic-lsp/build/bin/artic-lsp
+          - name: win32-x64
+            os: windows-latest
+            generator: Visual Studio 17 2022
+            binary: artic-lsp/build/bin/Release/artic-lsp.exe
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Ninja
+        if: matrix.os == 'ubuntu-latest'
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+
+      - name: Configure
+        run: cmake -S artic-lsp -B artic-lsp/build -G "${{ matrix.generator }}" -D CMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build artic-lsp/build --target artic-lsp --config Release --parallel
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: artic-lsp-${{ matrix.name }}
+          path: ${{ matrix.binary }}
+          if-no-files-found: error
+
+  package:
+    name: package
+    needs: server
+    # Must be Linux: vsce drops POSIX permissions from every file when it packages on
+    # Windows, which would ship the Linux binary without its executable bit.
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: artic-lsp-linux-x64
+          path: vscode/build/bin
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: artic-lsp-win32-x64
+          path: vscode/build/bin
+
+      # upload-artifact zips its input and loses the executable bit on the way.
+      - name: Restore the executable bit
+        run: chmod +x vscode/build/bin/artic-lsp
+
+      - name: Build the VSIX
+        working-directory: vscode
+        run: |
+          npm ci
+          npm run package
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vsix
+          path: vscode/*.vsix
+          if-no-files-found: error
+
+      - name: Attach the VSIX to the release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --generate-notes
+          gh release upload "$TAG" vscode/*.vsix --clobber

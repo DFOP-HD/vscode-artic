@@ -4,6 +4,7 @@
   "description": "Language support for AnyDSL's programming language",
   "version": "0.4.3",
   "publisher": "timgruen",
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/DFOP-HD/vscode-artic"

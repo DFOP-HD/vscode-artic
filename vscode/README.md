@@ -29,7 +29,7 @@ non-technical problems.
 - The legacy Impala syntax is not supported, even in `.impala` files
 - The workspace configuration file must be in the root workspace folder
 - `artic.json` is plain JSON: comments and trailing commas are rejected
-- Pre-built releases currently contain the Linux server binary only. On Windows, build the server
+- Releases contain the Linux and Windows server binaries; on any other platform, build the server
   from source and point `artic.serverPath` at it.
 
 ## Usage

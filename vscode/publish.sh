@@ -1,42 +1,40 @@
 #!/bin/bash
-set -e
+# Cuts a release: bumps the version, tags it and pushes. The Release workflow
+# (.github/workflows/release.yml) then builds the Linux and Windows server binaries,
+# packages a single VSIX containing both, and attaches it to the GitHub release.
+#
+# To build a VSIX locally instead, use ./package.sh.
 
-git pull
+set -euo pipefail
 
-# Check for uncommitted changes in root and artic-lsp
+cd "$(dirname "$0")"
+
+git pull --recurse-submodules
+
 if git status --porcelain | grep .; then
-    echo "Uncommitted changes found in root repository."
+    echo "Uncommitted changes found in the repository. Commit or stash them first."
     exit 1
 fi
 
-if git -C ../artic-lsp status --porcelain | grep .; then
-    echo "Uncommitted changes found in artic-lsp repository."
+# The artic fork is a submodule we commit to, so a dirty worktree there is easy to miss.
+if git -C ../artic status --porcelain | grep .; then
+    echo "Uncommitted changes found in the artic submodule."
     exit 1
 fi
 
-# Increment version number in package.json (patch version)
 echo "Incrementing version..."
 VERSION_TYPE="${1:-patch}"
 npm version "$VERSION_TYPE" --no-git-tag-version
 
-# Compile and package the extension
-echo "Compiling and packaging extension..."
-./package.sh install
-
-# Get new version
 NEW_VERSION=$(node -p "require('./package.json').version")
 TAG="v$NEW_VERSION"
-VSIX_FILE=$(ls *.vsix | tail -n1)
 
-# Commit version bump
-git add package.json package-lock.json \
-&& git commit -m "Release $TAG" \
-&& git tag "$TAG" \
-&& git push \
-&& git push --tags
+git add package.json package-lock.json
+git commit -m "Release $TAG"
+git tag "$TAG"
+git push
+git push origin "$TAG"
 
-# Create GitHub release and upload package
-echo "Creating GitHub release..."
-gh release create "$TAG" "$VSIX_FILE" --title "Release $TAG" --notes "Automated release of version $TAG"
-
-echo "Release $TAG published with $VSIX_FILE"
+echo ""
+echo "Pushed $TAG. Watch the release build at:"
+echo "  https://github.com/DFOP-HD/vscode-artic/actions/workflows/release.yml"

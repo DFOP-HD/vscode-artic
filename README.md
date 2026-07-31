@@ -29,7 +29,7 @@ non-technical problems.
 - The legacy Impala syntax is not supported, even in `.impala` files
 - The workspace configuration file must be in the root workspace folder
 - `artic.json` is plain JSON: comments and trailing commas are rejected
-- Pre-built releases currently contain the Linux server binary only. On Windows,
+- Releases contain the Linux and Windows server binaries; on any other platform,
   [build the server](#building) and point `artic.serverPath` at it.
 
 ## Usage
@@ -239,7 +239,30 @@ ctest --test-dir artic-lsp/build -E "^thorin_"  # the artic compiler's own suite
 ```
 
 Quote the glob: `node --test test/` does not work. Run `npm install` in `vscode/` first, because
-one test bundles `vscode/src/detect.ts` with esbuild. See [test/README.md](test/README.md).
+two tests bundle `vscode/src/detect.ts` and `vscode/src/server-path.ts` with esbuild. See
+[test/README.md](test/README.md).
+
+## Continuous integration
+
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on every push and pull request. It
+builds the server on Linux (Ninja/GCC) and Windows (`Visual Studio 17 2022`), runs both test
+suites and `npm audit` on each, and additionally proves on Linux that the standalone `artic`
+compiler still builds without `ENABLE_LSP` — that check uses the throwaway project in
+[artic-lsp/nolsp](artic-lsp/nolsp), which reuses the dependencies the main build already fetched.
+
+## Releasing
+
+[`.github/workflows/release.yml`](.github/workflows/release.yml) is triggered by a `v*` tag. It
+builds the server on Linux and Windows, then packages **one** VSIX containing both binaries and
+attaches it to the GitHub release. The extension picks the matching binary at startup, so the same
+file works on either platform, including over Remote-WSL where the extension host runs Linux while
+the editor runs on Windows.
+
+Packaging deliberately happens on Linux: `vsce` drops POSIX permissions from every packaged file
+when it runs on Windows, which would ship the Linux binary without its executable bit.
+
+To cut a release, run `vscode/publish.sh [patch|minor|major]`. It bumps the version, commits, tags
+and pushes; the workflow does the rest.
 
 ## Build and package the extension
 
@@ -262,6 +285,9 @@ npm run package
 
 Do not run the `.sh` scripts through `bash.exe` from PowerShell: on most Windows machines that is
 the WSL stub, and it will silently produce Linux binaries.
+
+A locally built VSIX contains the host platform's server binary only. Release VSIXs carry both;
+see [Releasing](#releasing).
 
 ## Extension Development Host
 
