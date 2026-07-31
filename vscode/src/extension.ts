@@ -4,6 +4,7 @@ import * as os from 'os';
 import { LanguageClient, LanguageClientOptions, ServerOptions, TransportKind, State, Trace } from 'vscode-languageclient/node';
 import { execSync } from 'child_process';
 import { existsSync } from 'fs';
+import { BuildFile, selectWorkspaceConfigFiles } from './detect';
 
 let client: LanguageClient | undefined = undefined;
 let expectedStop = false;
@@ -157,50 +158,41 @@ function toPosixRelativePath(fromDir: string, toFile: string): string {
     return path.relative(fromDir, toFile).replace(/\\/g, '/');
 }
 
-// Build systems whose output can be used as an artic project configuration, in the order
-// they are preferred. A solution already lists its projects, so once one is found the
-// .vcxproj files below it are redundant and would only produce duplicate-project warnings.
-const workspaceConfigPatterns = ['**/*.sln', '**/build.ninja', '**/*.vcxproj'];
+function pathKey(fsPath: string): string {
+    const resolved = path.resolve(fsPath);
+    return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+}
 
-/**
- * Build files in the workspace that mention artic, so they can be used as configuration.
- * Only the strongest match per directory tree is kept.
- */
+async function readTextFile(file: vscode.Uri): Promise<string | undefined> {
+    try {
+        return toUtf8(await vscode.workspace.fs.readFile(file));
+    } catch (error) {
+        console.warn(`Failed to inspect build file ${file.fsPath}:`, error);
+        return undefined;
+    }
+}
+
 async function findWorkspaceConfigCandidates(workspaceFolder: vscode.WorkspaceFolder): Promise<vscode.Uri[]> {
-    const kept: vscode.Uri[] = [];
-    const coveredDirs: string[] = [];
+    const find = (pattern: string) => vscode.workspace.findFiles(
+        new vscode.RelativePattern(workspaceFolder, pattern),
+        workspaceConfigExcludeGlob,
+    );
+    const found = (await Promise.all([
+        find('**/*.sln'), find('**/build.ninja'), find('**/*.vcxproj'),
+    ])).flat();
 
-    for (const pattern of workspaceConfigPatterns) {
-        const found = await vscode.workspace.findFiles(
-            new vscode.RelativePattern(workspaceFolder, pattern),
-            workspaceConfigExcludeGlob,
-        );
-        found.sort((left, right) => left.fsPath.localeCompare(right.fsPath));
-
-        const matched: vscode.Uri[] = [];
-        for (const file of found) {
-            const dir = path.dirname(file.fsPath);
-            if (coveredDirs.some((covered) => dir === covered || dir.startsWith(covered + path.sep))) {
-                continue;
-            }
-            try {
-                const content = toUtf8(await vscode.workspace.fs.readFile(file));
-                if (content.toLowerCase().includes('artic')) {
-                    matched.push(file);
-                }
-            } catch (error) {
-                console.warn(`Failed to inspect build file ${file.fsPath}:`, error);
-            }
-        }
-
-        for (const file of matched) {
-            kept.push(file);
-            coveredDirs.push(path.dirname(file.fsPath));
-        }
+    const byPath = new Map<string, vscode.Uri>();
+    const buildFiles: BuildFile[] = [];
+    for (const file of found) {
+        const content = await readTextFile(file);
+        if (content === undefined) continue;
+        byPath.set(pathKey(file.fsPath), file);
+        buildFiles.push({ fsPath: file.fsPath, content });
     }
 
-    kept.sort((left, right) => left.fsPath.localeCompare(right.fsPath));
-    return kept;
+    return selectWorkspaceConfigFiles(buildFiles)
+        .map((fsPath) => byPath.get(pathKey(fsPath)))
+        .filter((uri): uri is vscode.Uri => uri !== undefined);
 }
 
 async function updateWorkspaceConfigIncludes(workspaceFolder: vscode.WorkspaceFolder, buildFiles: vscode.Uri[]): Promise<{ created: boolean; added: number; configPath: string; }> {

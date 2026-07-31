@@ -229,13 +229,19 @@ Ordered. Keep status markers current.
    arguments are taken until the first one starting with `-`. Paths containing spaces are not
    supported, exactly as in `.vcxproj` files.
    The extension command is now `artic.detectWorkspaceConfiguration` ("Detect workspace
-   configuration"). It scans for `.sln`, then `build.ninja`, then `.vcxproj`, keeping only
-   files that mention artic and skipping anything under a directory already covered by a
-   stronger match — otherwise a solution and the projects it lists both get included and every
-   project is reported as a duplicate. Detected entries are written as **optional** includes
-   (trailing `?`) because a build directory does not exist on a fresh checkout.
-   Guarded by [test/ninja-config.test.mjs](test/ninja-config.test.mjs) and
-   [test/optional-includes.test.mjs](test/optional-includes.test.mjs).
+   configuration"). It scans for `.sln`, then `build.ninja`, then `.vcxproj`, and skips
+   anything under a directory already covered by a stronger match — otherwise a solution and
+   the projects it lists both get included and every project is reported as a duplicate.
+   **A `.sln` never contains the word "artic"** — it holds nothing but project names and
+   GUIDs — so it cannot be filtered by content like a `.vcxproj` or a `build.ninja` can. It
+   qualifies when one of the projects it references does. Getting this wrong made stincilla
+   detect all 57 of its `.vcxproj` files and miss `STINCILLA.sln`. The selection logic lives
+   in [vscode/src/detect.ts](vscode/src/detect.ts) so it can be tested without VS Code.
+   Detected entries are written as **optional** includes (trailing `?`) because a build
+   directory does not exist on a fresh checkout.
+   Guarded by [test/ninja-config.test.mjs](test/ninja-config.test.mjs),
+   [test/optional-includes.test.mjs](test/optional-includes.test.mjs) and
+   [test/detect-config.test.mjs](test/detect-config.test.mjs).
 5. **Clean up the artic fork** — guard all LSP-only additions behind `ENABLE_LSP`, and split
    out the genuinely upstreamable fixes (chiefly the type-checker error tolerance that lets
    later stages survive a failed earlier stage) so they can be PR'd to AnyDSL/artic.
