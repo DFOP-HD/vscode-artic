@@ -4,13 +4,9 @@
 
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join, resolve, sep } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { resolve, sep } from 'node:path';
 
-import { repoRoot } from './helpers.mjs';
+import { importExtensionModule } from './helpers.mjs';
 
 const root = process.platform === 'win32' ? 'D:\\ws' : '/ws';
 const p = (...parts) => resolve(root, ...parts);
@@ -40,19 +36,14 @@ function solution(entries) {
 
 describe('workspace configuration detection', () => {
     let selectWorkspaceConfigFiles;
-    let bundleDir;
+    let cleanup;
 
     before(async () => {
         // The logic lives in TypeScript next to the extension; bundle it so it can be
         // exercised without a VS Code instance.
-        bundleDir = mkdtempSync(join(tmpdir(), 'artic-detect-'));
-        const outFile = join(bundleDir, 'detect.mjs');
-        const esbuild = join(repoRoot, 'vscode', 'node_modules', 'esbuild', 'bin', 'esbuild');
-        execFileSync(process.execPath, [esbuild, 'src/detect.ts', '--bundle', '--format=esm', '--platform=node', `--outfile=${outFile}`], {
-            cwd: join(repoRoot, 'vscode'),
-            stdio: 'pipe',
-        });
-        ({ selectWorkspaceConfigFiles } = await import(pathToFileURL(outFile).href));
+        const bundle = await importExtensionModule('detect.ts');
+        cleanup = bundle.cleanup;
+        ({ selectWorkspaceConfigFiles } = bundle.module);
     });
 
     test('prefers a solution over the projects it lists', () => {
@@ -108,5 +99,5 @@ describe('workspace configuration detection', () => {
         assert.deepEqual(selected, [p('build', 'a.sln'), p('other', 'standalone.vcxproj')]);
     });
 
-    after(() => rmSync(bundleDir, { recursive: true, force: true }));
+    after(() => cleanup());
 });

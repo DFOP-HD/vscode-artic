@@ -3,15 +3,11 @@
 // Windows — so on Windows the extension failed with "Artic binary not found" and
 // there was no test to notice.
 
-import { test, describe, before } from 'node:test';
+import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
-import { mkdtempSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { pathToFileURL } from 'node:url';
 
-import { repoRoot } from './helpers.mjs';
+import { importExtensionModule } from './helpers.mjs';
 
 const extensionRoot = join('ext', 'root');
 
@@ -31,18 +27,15 @@ describe('server binary resolution', () => {
     let resolveServerPath;
     let bundledServerPath;
     let serverBinaryName;
+    let cleanup;
 
     before(async () => {
-        const bundleDir = mkdtempSync(join(tmpdir(), 'artic-server-path-'));
-        const outFile = join(bundleDir, 'server-path.mjs');
-        const esbuild = join(repoRoot, 'vscode', 'node_modules', 'esbuild', 'bin', 'esbuild');
-        execFileSync(
-            process.execPath,
-            [esbuild, 'src/server-path.ts', '--bundle', '--format=esm', '--platform=node', `--outfile=${outFile}`],
-            { cwd: join(repoRoot, 'vscode'), stdio: 'pipe' },
-        );
-        ({ resolveServerPath, bundledServerPath, serverBinaryName } = await import(pathToFileURL(outFile).href));
+        const bundle = await importExtensionModule('server-path.ts');
+        cleanup = bundle.cleanup;
+        ({ resolveServerPath, bundledServerPath, serverBinaryName } = bundle.module);
     });
+
+    after(() => cleanup());
 
     test('looks for the .exe on Windows and the bare name elsewhere', () => {
         assert.equal(serverBinaryName('win32'), 'artic-lsp.exe');

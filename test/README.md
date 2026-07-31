@@ -21,7 +21,7 @@ $env:ARTIC_BIN     = 'path/to/artic.exe'       # compiler, for fixture validatio
 Build them first — see [AGENTS.md](../AGENTS.md):
 
 ```powershell
-cmake --build artic-lsp/buildGcc --target artic-lsp artic --parallel
+cmake --build artic-lsp/buildGcc --parallel
 ```
 
 Also run the artic compiler's own suite when touching the submodule:

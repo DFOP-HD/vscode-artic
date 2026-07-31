@@ -42,7 +42,10 @@ add_executable(artic-lsp
     src/config.cpp
 )
 
-add_subdirectory(../artic artic EXCLUDE_FROM_ALL)
+# Not EXCLUDE_FROM_ALL: the standalone `artic` binary is needed to validate fixtures and
+# to run the compiler's own ctest suite, and asking for it by name is unreliable with the
+# Visual Studio generator, which cannot locate a target defined in a subdirectory.
+add_subdirectory(../artic artic)
 target_include_directories(artic-lsp PUBLIC ../artic/include)
 
 target_include_directories(artic-lsp PUBLIC

@@ -217,12 +217,9 @@ cmake -S artic-lsp -B artic-lsp/build -G Ninja -D CMAKE_BUILD_TYPE=Release
 cmake --build artic-lsp/build --parallel
 ```
 
-This produces `artic-lsp/build/bin/artic-lsp`. Also build the standalone compiler, which the
-fixture tests and the compiler's own test suite need:
-
-```bash
-cmake --build artic-lsp/build --target artic --parallel
-```
+This produces `artic-lsp/build/bin/artic-lsp` and `artic-lsp/build/bin/artic` — the standalone
+compiler is part of the default target because the fixture tests and the compiler's own test
+suite need it.
 
 Any directory matching `build*` is ignored by git, so several configurations can coexist.
 

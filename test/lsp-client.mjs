@@ -36,6 +36,9 @@ export class LspClient {
         this.#proc = spawn(serverPath, ['--lsp'], { cwd, stdio: ['pipe', 'pipe', 'pipe'] });
         this.#proc.stdout.on('data', (chunk) => this.#onStdout(chunk));
         this.#proc.stderr.on('data', (chunk) => { this.stderr += chunk.toString(); });
+        // A write that loses the race with the server closing stdin raises EPIPE on
+        // Linux; unhandled, it surfaces as an uncaughtException long after the test.
+        this.#proc.stdin.on('error', () => {});
     }
 
     #onStdout(chunk) {
@@ -84,9 +87,11 @@ export class LspClient {
     }
 
     #send(msg) {
+        const stdin = this.#proc.stdin;
+        if (this.#proc.exitCode !== null || !stdin.writable) return;
         const content = Buffer.from(JSON.stringify(msg), 'utf8');
-        this.#proc.stdin.write(`Content-Length: ${content.length}\r\n\r\n`);
-        this.#proc.stdin.write(content);
+        stdin.write(`Content-Length: ${content.length}\r\n\r\n`);
+        stdin.write(content);
     }
 
     request(method, params, { timeout = 20000 } = {}) {

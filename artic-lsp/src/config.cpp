@@ -81,6 +81,13 @@ static fs::path to_absolute_path(fs::path base_dir, std::string path) {
     return canonical_path(base_dir / path);
 }
 
+// .sln and .vcxproj are Windows-only formats and always spell paths with backslashes,
+// which are ordinary filename characters everywhere else.
+static std::string from_msbuild_path(std::string path) {
+    std::replace(path.begin(), path.end(), '\\', '/');
+    return path;
+}
+
 bool ConfigParser::parse() {
     try {
         if (origin.path.empty()) {
@@ -371,7 +378,7 @@ std::optional<Project> parse_vcxproj(const ConfigPath& origin, ConfigLog& log) {
             std::vector<fs::path> files;
             std::string file;
             while (ss >> file) {
-                auto abs_path = to_absolute_path(origin.path.parent_path(), file);
+                auto abs_path = to_absolute_path(origin.path.parent_path(), from_msbuild_path(file));
                 files.push_back(abs_path);
                 // log.info("Found file in vcxproj: " + abs_path.generic_string());
             }
@@ -430,7 +437,7 @@ std::vector<ConfigPath> parse_sln(const ConfigPath& origin, ConfigLog& log) {
         std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return std::tolower(c); });
         if (ext != ".vcxproj") continue;
 
-        auto abs_path = to_absolute_path(origin.path.parent_path(), rel);
+        auto abs_path = to_absolute_path(origin.path.parent_path(), from_msbuild_path(rel));
         if (!seen.insert(abs_path.generic_string()).second) continue;
         if (!fs::exists(abs_path)) {
             log.warn("Solution references a project that does not exist: " + abs_path.generic_string(), rel);

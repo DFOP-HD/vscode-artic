@@ -18,7 +18,8 @@ artic-lsp/buildGcc/bin/artic.exe --no-color path/to/file.art
 
 Exit code 0 means it compiled. Pass every file of a project in one invocation —
 declarations are visible across files given to the same command, and order does not matter.
-Build the compiler with `cmake --build artic-lsp/buildGcc --target artic`.
+Build the compiler with `cmake --build artic-lsp/buildGcc --parallel` (the default target
+includes it).
 
 ## The five things that trip people up
 

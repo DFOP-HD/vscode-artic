@@ -32,13 +32,12 @@ cmake -S artic-lsp -B artic-lsp/buildGcc -G Ninja -D CMAKE_BUILD_TYPE=Release `
 cmake --build artic-lsp/buildGcc --parallel
 ```
 
-Outputs `artic-lsp/buildGcc/bin/artic-lsp.exe`.
-
-Also build the standalone compiler — needed to validate `.art` fixtures:
-
-```powershell
-cmake --build artic-lsp/buildGcc --target artic --parallel   # -> buildGcc/bin/artic.exe
-```
+Outputs `artic-lsp/buildGcc/bin/artic-lsp.exe` and `artic-lsp/buildGcc/bin/artic.exe` — the
+default target builds both, because the standalone compiler is needed to validate `.art`
+fixtures and to run the compiler's own ctest suite. **Do not ask for `artic` by name**
+(`--target artic-lsp artic`): the Visual Studio generator cannot resolve a target defined in
+a subdirectory and fails with `MSB1009: Project file does not exist. Switch: artic.vcxproj`,
+because the project is really at `<build>/artic/src/artic.vcxproj`.
 
 ### Verified toolchains
 
@@ -143,6 +142,10 @@ the editor is Windows.
   `could not find any instance of Visual Studio` once the `windows-latest` image moved past
   VS 2022. The Windows leg passes no `-G` at all, so CMake selects the newest Visual Studio
   present; MSBuild still finds the Windows SDK by itself. Locally, pinning is fine.
+- **Nor name build targets there.** The build step is a plain
+  `cmake --build artic-lsp/build --config Release --parallel`; see
+  [Fast local loop](#fast-local-loop-recommended) for why `--target artic` cannot work under
+  MSBuild.
 - **The test step runs under `shell: bash`, with the glob unquoted.** `node --test` only
   expands glob patterns itself on newer Node, so `node --test "test/*.test.mjs"` failed on
   the runner with `Could not find '.../test/*.test.mjs'`. Letting bash (Git Bash on the
@@ -544,3 +547,20 @@ handler already uses. The commented-out capability list at the bottom of
   the capability reads `undefined`, which looks exactly like a registration bug in code that
   is actually fine. `Remove-Item Env:ARTIC_LSP_BIN` when done, and check it first when a
   freshly built feature appears to be missing.
+- **A backslash is a separator only on Windows, and `.sln`/`.vcxproj` always use one.**
+  `to_absolute_path(dir, "src\\main.art")` yields a single filename containing a backslash on
+  Linux, so the file "does not exist" and the project silently expands to nothing. Both
+  MSBuild parsers in [artic-lsp/src/config.cpp](artic-lsp/src/config.cpp) go through
+  `from_msbuild_path()` now. `build.ninja` is deliberately *not* converted: it is generated
+  per platform and a literal backslash there is only ever a separator on Windows, where it
+  already works.
+- **Writing to a server that is exiting raises EPIPE on Linux and is silent on Windows.**
+  `LspClient.stop()` sends `exit` right after `shutdown`, so the write races the server
+  closing stdin. Unhandled, it surfaced as `write EPIPE` in an `after` hook *after the test
+  had ended*, failing six suites that were otherwise green. `#send()` now bails out when the
+  child has exited or stdin is no longer writable, and `stdin` has an `error` listener.
+- **`node_modules/esbuild/bin/esbuild` is a JS shim on Windows and a native ELF binary on
+  Linux.** `execFileSync(process.execPath, [esbuild, ...])` therefore works locally and dies
+  with `SyntaxError: Invalid or unexpected token` (on the literal text `ELF`) in CI. Use the
+  JS API via `importExtensionModule()` in [test/helpers.mjs](test/helpers.mjs), which picks
+  esbuild's own platform binary.

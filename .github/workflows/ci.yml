@@ -58,7 +58,7 @@ jobs:
         run: cmake -S artic-lsp -B artic-lsp/build ${{ matrix.generator }} -D CMAKE_BUILD_TYPE=Release
 
       - name: Build
-        run: cmake --build artic-lsp/build --target artic-lsp artic --config Release --parallel
+        run: cmake --build artic-lsp/build --config Release --parallel
 
       - name: Artic compiler test suite
         run: ctest --test-dir artic-lsp/build -C Release -E "^thorin_" --output-on-failure

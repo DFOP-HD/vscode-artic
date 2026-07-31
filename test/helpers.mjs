@@ -91,6 +91,29 @@ export function stageFiles(files) {
     };
 }
 
+/**
+ * Bundles a module from `vscode/src` and imports it, so extension logic can be tested
+ * without a VS Code instance. Uses esbuild's JS API rather than its CLI: npm replaces
+ * `esbuild/bin/esbuild` with the native executable on Linux, so running that file
+ * through node fails with "ELF ... Invalid or unexpected token".
+ */
+export async function importExtensionModule(entry) {
+    const vscodeDir = join(repoRoot, 'vscode');
+    const esbuildMain = join(vscodeDir, 'node_modules', 'esbuild', 'lib', 'main.js');
+    const esbuild = (await import(pathToFileURL(esbuildMain).href)).default;
+
+    const dir = mkdtempSync(join(tmpdir(), 'artic-bundle-'));
+    const outfile = join(dir, `${entry.replace(/\.ts$/, '')}.mjs`);
+    await esbuild.build({
+        entryPoints: [join(vscodeDir, 'src', entry)],
+        outfile,
+        bundle: true,
+        format: 'esm',
+        platform: 'node',
+    });
+    return { module: await import(pathToFileURL(outfile).href), cleanup: () => rmSync(dir, { recursive: true, force: true }) };
+}
+
 /** The server normalises URIs, so compare on the resolved path instead. */
 export function uriToPath(uri) {
     return resolve(fileURLToPath(uri));
