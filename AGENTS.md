@@ -455,9 +455,26 @@ is the reference for what else a server can advertise.
     never cleared, and the file stays in the compile set.
 12. **Selection range** — Shift+Alt+Right. Walk the AST spine at the cursor and emit the
     nested `Loc` ranges.
-13. **Signature help** — find the enclosing `CallExpr` and the argument index, then render
-    the callee's `FnType`. Worth more in Artic than in most languages, because it is the
-    natural place to show which parameters are implicit.
+13. **Signature help** — *done*. `TextDocument_SignatureHelp` is registered in
+    `setup_events_signature_help()` and `signatureHelpProvider` is advertised with `(` and
+    `,` as trigger characters. **The call site is found in the source text, not in the AST**:
+    signature help fires on a half-written call like `dot(a,`, where the parser has produced
+    an error node rather than a `CallExpr`, so an AST walk finds nothing exactly when the
+    feature is wanted. `enclosing_bracket()` scans backwards for the innermost unclosed
+    bracket — skipping comments and string/char literals so a `(` inside one does not open a
+    frame — and counts the commas at that bracket's own nesting level, which is the active
+    parameter index. `callee_before()` then takes the identifier in front of the `(`, skipping
+    a `[...]` type-argument list, and the declaration is resolved through
+    `name_map.find_ref_at` + `find_decl` at the identifier's **first** character, so the
+    lookup does not depend on how the lexer spells the end of a token.
+    `render_signature()` prefers the *declaration* over the type, because only a declaration
+    carries parameter names; an `OptionDecl` has to be rendered from the declaration in any
+    case, since an enum option's type is its payload rather than a function type. Generic
+    functions are unwrapped through `ForallType::body`, exactly as in completion.
+    `activeParameter` is clamped to the last parameter — an out-of-range index makes VS Code
+    highlight the *first* one, which is worse than sticking to the last. Guarded by
+    [test/signature-help.test.mjs](test/signature-help.test.mjs) against
+    [test/fixtures/signature-help/src/calls.art](test/fixtures/signature-help/src/calls.art).
 14. **Go to type definition** — `expr->type`, unwrapped through `TypeApp`, to the originating
     `StructType` / `EnumType` declaration.
 15. **Go to implementation for implicits / `summon`** — jump from a summoned implicit to the

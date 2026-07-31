@@ -1,0 +1,34 @@
+// Fixture: one call site of every shape signature help has to answer for.
+// Written for this repository - do not replace with code from other AnyDSL projects.
+
+implicit i32 = 42;
+
+struct Point {
+    x: i32,
+    y: i32
+}
+
+enum Shape {
+    Empty,
+    Dot(Point)
+}
+
+fn add(a: i32, b: i32) -> i32 { a + b }
+
+fn identity[T](value: T) -> T { value }
+
+fn scaled(factor: i32, implicit unit: i32) -> i32 { factor * unit }
+
+fn no_args() -> i32 { 0 }
+
+fn main() -> i32 {
+    let sum = add(1, 2);
+    let same = identity[i32](sum);
+    let big = scaled(2);
+    let nothing = no_args();
+    let dot = Shape::Dot(Point { x = big, y = nothing });
+    match dot {
+        Shape::Dot(p) => add(p.x, same + p.y),
+        Shape::Empty => 0
+    }
+}

@@ -35,6 +35,10 @@ namespace fs = std::filesystem;
 namespace artic::ls {
 namespace {
 
+fs::path absolute_path(std::string_view file) {
+    return paths::canonical_path(fs::path(file));
+}
+
 void log_request(std::string_view name, const lsp::TextDocumentIdentifier& doc) {
     log::info("\n[LSP] <<< {} {}", name, doc.uri.path());
 }
@@ -136,6 +140,10 @@ void Server::setup_events_initialization() {
                     .triggerCharacters = std::vector<std::string>{".", ":"}
                 },
                 .hoverProvider = true,
+                .signatureHelpProvider = lsp::SignatureHelpOptions{
+                    .triggerCharacters = std::vector<std::string>{"(", ","},
+                    .retriggerCharacters = std::vector<std::string>{")"}
+                },
                 .definitionProvider = true,
                 .referencesProvider = true,
                 .documentSymbolProvider = true,
@@ -203,7 +211,7 @@ void Server::setup_events_modifications() {
     });
     message_handler_.add<notif::TextDocument_DidOpen>([this](notif::TextDocument_DidOpen::Params&& params) {
         log::info("\n[LSP] <<< TextDocument DidOpen");
-        auto path = paths::canonical_path(params.textDocument.uri.path());
+        auto path = absolute_path(params.textDocument.uri.path());
 
         if(get_file_type(path) == FileType::SourceFile) {
             ensure_compile(path.string());
@@ -218,7 +226,7 @@ void Server::setup_events_modifications() {
         log::info("");
         log::info("--------------------------------");
         log::info("[LSP] <<< TextDocument DidChange");
-        std::filesystem::path file = paths::canonical_path(params.textDocument.uri.path());
+        std::filesystem::path file = absolute_path(params.textDocument.uri.path());
         if(get_file_type(file) == FileType::ConfigFile) {
             // handled in didsave
             return;
@@ -230,7 +238,7 @@ void Server::setup_events_modifications() {
 
     message_handler_.add<notif::TextDocument_DidSave>([this](notif::TextDocument_DidSave::Params&& params) {
         log::info("\n[LSP] <<< TextDocument DidSave");
-        std::filesystem::path file = paths::canonical_path(params.textDocument.uri.path());
+        std::filesystem::path file = absolute_path(params.textDocument.uri.path());
         if(get_file_type(file) == FileType::ConfigFile) {
             workspace::config::ConfigLog log{};
             bool known = workspace_->on_config_changed(file, log);
@@ -249,7 +257,7 @@ void Server::setup_events_modifications() {
     });
     message_handler_.add<notif::Workspace_DidChangeWatchedFiles>([this](notif::Workspace_DidChangeWatchedFiles::Params&& params) {
         for(auto& change : params.changes) {
-            auto path = paths::canonical_path(change.uri.path());
+            auto path = absolute_path(change.uri.path());
 
             switch(change.type.index()) {
                 case lsp::FileChangeType::Created: 
@@ -404,7 +412,7 @@ lsp::SemanticTokens collect_semantic_tokens(
 void Server::setup_events_tokens() {
     // Semantic Tokens ----------------------------------------------------------------------
     message_handler_.add<reqst::TextDocument_SemanticTokens_Full>([this](lsp::SemanticTokensParams&& params) -> reqst::TextDocument_SemanticTokens_Full::Result {
-        auto file = paths::canonical_path(params.textDocument.uri.path());
+        auto file = absolute_path(params.textDocument.uri.path());
         log_request("TextDocument SemanticTokens_Full", params.textDocument);
         
         if(!has_compiled(file)) return nullptr;
@@ -415,7 +423,7 @@ void Server::setup_events_tokens() {
     });
 
     message_handler_.add<reqst::TextDocument_SemanticTokens_Range>([this](lsp::SemanticTokensRangeParams&& params) -> reqst::TextDocument_SemanticTokens_Range::Result {
-        auto file = paths::canonical_path(params.textDocument.uri.path());
+        auto file = absolute_path(params.textDocument.uri.path());
         log_request("TextDocument SemanticTokens_Range", params.textDocument, params.range);
 
         if(!has_compiled(file)) return nullptr;
@@ -601,7 +609,7 @@ void Server::setup_events_definitions() {
         log_request("TextDocument DocumentSymbol", params.textDocument);
 
         if (get_file_type(params.textDocument.uri.path()) != FileType::SourceFile) return nullptr;
-        auto file = paths::canonical_path(params.textDocument.uri.path()).generic_string();
+        auto file = absolute_path(params.textDocument.uri.path()).generic_string();
         ensure_compile(params.textDocument.uri.path());
         if (!compile || !compile->program) return nullptr;
 
@@ -1165,6 +1173,213 @@ void Server::setup_events_completion() {
 // -----------------------------------------------------------------------------
 //
 //
+// Signature Help
+//
+//
+// -----------------------------------------------------------------------------
+
+
+// Signature Help Helper Functions
+namespace {
+
+/// An unclosed bracket in front of the cursor, and how many commas of that bracket's own
+/// nesting level separate it from the cursor.
+struct BracketFrame {
+    size_t open;
+    unsigned commas;
+};
+
+/// Signature help fires on half-written calls, where the parser leaves an error node
+/// instead of a `CallExpr`, so the call site is located in the source text.
+std::optional<BracketFrame> enclosing_bracket(std::string_view src, size_t cursor) {
+    std::vector<BracketFrame> stack;
+    for (size_t i = 0; i < cursor; ++i) {
+        switch (src[i]) {
+            case '/':
+                if (i + 1 < cursor && src[i + 1] == '/') {
+                    while (i < cursor && src[i] != '\n') ++i;
+                } else if (i + 1 < cursor && src[i + 1] == '*') {
+                    // Artic's block comments do not nest, so the first `*/` closes this one.
+                    for (i += 2; i + 1 < cursor && (src[i] != '*' || src[i + 1] != '/'); ++i) {}
+                    ++i;
+                }
+                break;
+            case '"':
+            case '\'': {
+                const char quote = src[i++];
+                while (i < cursor && src[i] != quote) i += src[i] == '\\' ? 2 : 1;
+                break;
+            }
+            case '(': case '[': case '{': stack.push_back({ i, 0 }); break;
+            case ')': case ']': case '}': if (!stack.empty()) stack.pop_back(); break;
+            case ',': if (!stack.empty()) ++stack.back().commas; break;
+            default: break;
+        }
+    }
+    if (stack.empty()) return std::nullopt;
+    return stack.back();
+}
+
+/// The byte range of the callee identifier in front of an opening parenthesis, skipping a
+/// `[...]` type-argument list. Empty for a plain parenthesised expression.
+std::optional<std::pair<size_t, size_t>> callee_before(std::string_view src, size_t open) {
+    auto skip_spaces = [&](size_t i) {
+        while (i > 0 && std::isspace(static_cast<unsigned char>(src[i - 1]))) --i;
+        return i;
+    };
+
+    size_t end = skip_spaces(open);
+    if (end > 0 && src[end - 1] == ']') {
+        for (int depth = 0; end > 0;) {
+            --end;
+            if (src[end] == ']') ++depth;
+            else if (src[end] == '[' && --depth == 0) break;
+        }
+        end = skip_spaces(end);
+    }
+    size_t begin = end;
+    while (begin > 0 && (std::isalnum(static_cast<unsigned char>(src[begin - 1])) || src[begin - 1] == '_'))
+        --begin;
+    if (begin == end) return std::nullopt;
+    return std::pair{ begin, end };
+}
+
+std::optional<size_t> offset_at(const LocatorInfo& file, const Loc::Pos& pos) {
+    if (pos.row < 1 || size_t(pos.row) >= file.lines.size()) return std::nullopt;
+    return size_t(file.at(pos.row, pos.col) - file.data.data());
+}
+
+Loc::Pos position_at(const LocatorInfo& file, size_t offset) {
+    auto line = std::upper_bound(file.lines.begin(), file.lines.end(), offset);
+    int row = std::max(1, static_cast<int>(line - file.lines.begin()));
+    int col = 1;
+    // Columns count code points, so UTF-8 continuation bytes must not advance one.
+    for (size_t i = file.lines[row - 1]; i < offset; ++i)
+        if ((static_cast<unsigned char>(file.data[i]) & 0xC0) != 0x80) ++col;
+    return Loc::Pos{ .row = row, .col = col };
+}
+
+struct RenderedSignature {
+    std::string label;
+    lsp::Array<lsp::ParameterInformation> params;
+};
+
+void add_param(RenderedSignature& sig, const std::string& text) {
+    auto begin = static_cast<lsp::uint>(sig.label.size());
+    sig.label += text;
+    sig.params.push_back(lsp::ParameterInformation{
+        .label = std::tuple{ begin, static_cast<lsp::uint>(sig.label.size()) }
+    });
+}
+
+/// Renders the callee as `fn name[T](a: i32, b: i32) -> i32`, recording where each
+/// parameter sits inside the label so the client can highlight the active one.
+std::optional<RenderedSignature> render_signature(const ast::NamedDecl& decl) {
+    const Type* type = decl.type;
+    if (const auto* forall = type ? type->isa<ForallType>() : nullptr) type = forall->body;
+
+    const auto* fn_decl = decl.isa<ast::FnDecl>();
+    // An enum option's type is its payload rather than a function type, so a constructor
+    // call can only be rendered from the declaration.
+    const auto* option_decl = decl.isa<ast::OptionDecl>();
+    const auto* fn_type = type ? type->isa<FnType>() : nullptr;
+    if (!fn_decl && !fn_type && !(option_decl && option_decl->param)) return std::nullopt;
+
+    RenderedSignature sig;
+    if (fn_decl) sig.label += "fn ";
+    if (option_decl && option_decl->parent) sig.label += option_decl->parent->id.name + "::";
+    sig.label += decl.id.name;
+    if (fn_decl && fn_decl->type_params) sig.label += print_to_string(*fn_decl->type_params);
+
+    auto add_params = [&](const auto& nodes) {
+        for (size_t i = 0; i < nodes.size(); ++i) {
+            if (i > 0) sig.label += ", ";
+            add_param(sig, print_to_string(*nodes[i]));
+        }
+    };
+
+    sig.label += '(';
+    // Only a declaration carries parameter names; anything else callable has just a type.
+    if (option_decl) {
+        if (const auto* tuple = option_decl->param->isa<ast::TupleType>()) add_params(tuple->args);
+        else add_param(sig, print_to_string(*option_decl->param));
+    } else if (fn_decl && fn_decl->fn->param) {
+        const auto& param = *fn_decl->fn->param;
+        if (const auto* tuple = param.isa<ast::TuplePtrn>()) add_params(tuple->args);
+        else add_param(sig, print_to_string(param));
+    } else if (fn_type && fn_type->dom) {
+        if (const auto* tuple = fn_type->dom->isa<TupleType>()) add_params(tuple->args);
+        else add_param(sig, print_to_string(*fn_type->dom));
+    }
+    sig.label += ')';
+
+    if (fn_decl && fn_decl->fn->ret_type) sig.label += " -> " + print_to_string(*fn_decl->fn->ret_type);
+    else if (!option_decl && fn_type && fn_type->codom) sig.label += " -> " + print_to_string(*fn_type->codom);
+
+    return sig;
+}
+
+} // anonymous namespace
+
+void Server::setup_events_signature_help() {
+    message_handler_.add<reqst::TextDocument_SignatureHelp>([this](reqst::TextDocument_SignatureHelp::Params&& params) -> reqst::TextDocument_SignatureHelp::Result {
+        log_request("TextDocument SignatureHelp", params.textDocument, params.position);
+
+        if (get_file_type(params.textDocument.uri.path()) != FileType::SourceFile) return nullptr;
+        ensure_compile(params.textDocument.uri.path());
+
+        auto cursor = to_loc(params.textDocument, params.position);
+        const LocatorInfo* file = compile->locator.data(*cursor.file);
+        if (!file) return nullptr;
+
+        auto cursor_offset = offset_at(*file, cursor.begin);
+        if (!cursor_offset) return nullptr;
+
+        auto frame = enclosing_bracket(file->data, *cursor_offset);
+        if (!frame || file->data[frame->open] != '(') {
+            log::info("[LSP] >>> SignatureHelp: cursor is not inside an argument list");
+            return nullptr;
+        }
+
+        auto callee = callee_before(file->data, frame->open);
+        if (!callee) return nullptr;
+
+        // A caret on the identifier's first character, so the lookup does not depend on
+        // how the lexer spells the end of a token.
+        Loc name_loc(cursor.file, position_at(*file, callee->first));
+        auto ref = compile->name_map.find_ref_at(name_loc);
+        const ast::NamedDecl* decl = ref ? compile->name_map.find_decl(*ref) : nullptr;
+        if (!decl) {
+            log::info("[LSP] >>> SignatureHelp found no declaration for the callee");
+            return nullptr;
+        }
+
+        auto sig = render_signature(*decl);
+        if (!sig) {
+            log::info("[LSP] >>> SignatureHelp: '{}' is not callable", decl->id.name);
+            return nullptr;
+        }
+
+        lsp::SignatureInformation signature{ .label = std::move(sig->label) };
+        if (!sig->params.empty()) {
+            // An index past the last parameter would make the client highlight the first
+            // one instead, which is worse than sticking to the last.
+            signature.activeParameter = std::min<lsp::uint>(frame->commas, lsp::uint(sig->params.size() - 1));
+            signature.parameters = std::move(sig->params);
+        }
+        log::info("[LSP] >>> SignatureHelp '{}' at parameter {}", signature.label, frame->commas);
+
+        return lsp::SignatureHelp{
+            .signatures = { std::move(signature) },
+            .activeSignature = 0u,
+        };
+    });
+}
+
+
+// -----------------------------------------------------------------------------
+//
+//
 // Server Compilation / Diagnostics
 //
 //
@@ -1232,7 +1447,7 @@ void Server::compile_this_and_related_files(std::filesystem::path file, std::str
 }
 
 void Server::ensure_compile(std::string_view file_view) {
-    fs::path file = paths::canonical_path(file_view);
+    fs::path file = absolute_path(file_view);
     if(get_file_type(file) != FileType::SourceFile) {
         throw lsp::RequestError(lsp::Error::InvalidParams, "File is not an Artic source file");
     }
@@ -1349,7 +1564,7 @@ void Server::reload_workspace() {
 void Server::setup_events_other() {
 
     message_handler_.add<reqst::TextDocument_InlayHint>([this](reqst::TextDocument_InlayHint::Params&& params) -> reqst::TextDocument_InlayHint::Result {
-        fs::path file = paths::canonical_path(params.textDocument.uri.path());
+        fs::path file = absolute_path(params.textDocument.uri.path());
         log_request("TextDocument InlayHint", params.textDocument, params.range);
 
         // inlay hints are not allowed to trigger recompile as this is called right after document changed
