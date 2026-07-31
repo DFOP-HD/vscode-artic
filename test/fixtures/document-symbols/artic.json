@@ -1,0 +1,11 @@
+{
+    "artic-config": "2.0",
+    "projects": [
+        {
+            "name": "document-symbols",
+            "files": [
+                "src/**/*.art"
+            ]
+        }
+    ]
+}

@@ -36,6 +36,11 @@ describe('fixture validity', { skip: artic ? false : 'artic compiler not built' 
         assert.ok(result.ok, `hover fixture must compile:\n${result.output}`);
     });
 
+    test('the document symbols project compiles', () => {
+        const result = compile(join(fixturesDir, 'document-symbols', 'src', 'outline.art'));
+        assert.ok(result.ok, `document-symbols fixture must compile:\n${result.output}`);
+    });
+
     test('the type error fixture fails with exactly the asserted diagnostic', () => {
         const dir = join(fixturesDir, 'diagnostics', 'src');
         const result = compile(join(dir, 'healthy.art'), join(dir, 'type_error.art'));

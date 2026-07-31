@@ -1,0 +1,53 @@
+// Fixture: one declaration of every kind the outline has to describe.
+// Written for this repository - do not replace with code from other AnyDSL projects.
+
+type Distance = i32;
+
+struct Point {
+    x: i32,
+    y: i32
+}
+
+struct Pair(i32, i32);
+
+enum Shape {
+    Empty,
+    Dot(Point),
+    Box { width: i32, height: i32 }
+}
+
+static ORIGIN: Point = Point { x = 0, y = 0 };
+static mut counter: i32 = 0;
+
+implicit Point = ORIGIN;
+
+fn offset(implicit base: Point) -> Distance = base.x + base.y;
+
+mod metrics {
+    struct Sample {
+        value: i32
+    }
+
+    fn double(s: Sample) -> i32 = s.value * 2;
+}
+
+fn manhattan(p: Point) -> Distance {
+    let dx = p.x;
+    let dy = p.y;
+    dx + dy
+}
+
+fn area(s: Shape) -> Distance {
+    match s {
+        Shape::Empty => 0,
+        Shape::Dot(p) => manhattan(p),
+        Shape::Box { width = w, height = h } => w * h
+    }
+}
+
+fn main() -> i32 {
+    counter = area(Shape::Dot(Point { x = 3, y = 4 })) + offset();
+    let pair = Pair(1, 2);
+    let sample = metrics::Sample { value = pair.0 };
+    counter + metrics::double(sample) + pair.1
+}

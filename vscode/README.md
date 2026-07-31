@@ -16,6 +16,7 @@ non-technical problems.
 - Diagnostics (errors, warnings and hints) from the real lexer, parser, name binder and type checker
 - Hover: declaration signature and inferred type
 - Go to definition and find references
+- Document symbols: outline view, breadcrumbs and Ctrl+Shift+O
 - Rename
 - Code completion for the symbols in scope
 - Inlay hints for inferred types

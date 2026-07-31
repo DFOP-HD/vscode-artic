@@ -414,9 +414,18 @@ handler already uses. The commented-out capability list at the bottom of
    is duplicated rather than exported. Guarded by [test/hover.test.mjs](test/hover.test.mjs)
    against [test/fixtures/hover/src/shapes.art](test/fixtures/hover/src/shapes.art), which
    holds one declaration of every kind the renderer branches on.
-9. **Document symbols** — powers the outline view, breadcrumbs and Ctrl+Shift+O. One
-   traversal of the file's `ModDecl` emitting a hierarchical `DocumentSymbol` tree for
-   mod / fn / struct / enum / variant / field / static / type alias / implicit.
+9. **Document symbols** — *done*. `TextDocument_DocumentSymbol` is registered in
+   `setup_events_definitions()` and `documentSymbolProvider` is advertised. One pass over
+   `compile->program->decls` builds a hierarchical `DocumentSymbol` tree via
+   `make_document_symbol()` / `collect_document_symbols()` in
+   [artic-lsp/src/server.cpp](artic-lsp/src/server.cpp); `detail` reuses the hover renderer,
+   so the outline and the hover popup can never disagree. **`program` is the concatenation
+   of every file in the project**, so each entry is filtered on `decl.loc.file` — without
+   that the outline of one file lists the whole project. Fields of a tuple-like struct are
+   skipped: they are named `0`, `1`, … and say nothing. `implicit` is the one declaration
+   with no identifier; it is named `"implicit"` and detailed with its type. Guarded by
+   [test/document-symbols.test.mjs](test/document-symbols.test.mjs) against
+   [test/fixtures/document-symbols/src/outline.art](test/fixtures/document-symbols/src/outline.art).
 10. **Document highlight, and fix `definition` on a declaration** — do these together.
     `textDocument/definition` currently returns *all references* when the cursor sits on a
     declaration; that is what documentHighlight and references are for, and it makes
@@ -547,6 +556,17 @@ handler already uses. The commented-out capability list at the bottom of
   the capability reads `undefined`, which looks exactly like a registration bug in code that
   is actually fine. `Remove-Item Env:ARTIC_LSP_BIN` when done, and check it first when a
   freshly built feature appears to be missing.
+- **The CI runner's `%TEMP%` is an 8.3 short path, and MSVC's `weakly_canonical` expands it.**
+  `os.tmpdir()` on `windows-latest` is `C:\Users\RUNNER~1\AppData\Local\Temp`, because
+  `runneradmin` exceeds eight characters. A test that staged a workspace there sent
+  `file:///C:/Users/RUNNER%7E1/...` while the server published diagnostics under
+  `c:/Users/runneradmin/...`, so `waitForDiagnostics()` timed out and 13 tests failed with
+  27 cancelled — while `Compile success` and the diagnostics themselves were plainly visible
+  in the server's stderr. `stageFixture()`/`stageFiles()` run the temp directory through
+  `realpathSync.native()` now. Two things make this hard to hit locally: a user name of
+  eight characters or fewer produces no short name at all, and **MinGW's `weakly_canonical`
+  does not expand 8.3 names while MSVC's does** — reproducing it needs a short `TMP` *and*
+  `ARTIC_LSP_BIN` pointed at an MSVC build.
 - **A backslash is a separator only on Windows, and `.sln`/`.vcxproj` always use one.**
   `to_absolute_path(dir, "src\\main.art")` yields a single filename containing a backslash on
   Linux, so the file "does not exist" and the project silently expands to nothing. Both

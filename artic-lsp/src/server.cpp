@@ -180,6 +180,7 @@ void Server::setup_events_initialization() {
                 .hoverProvider = true,
                 .definitionProvider = true,
                 .referencesProvider = true,
+                .documentSymbolProvider = true,
                 .renameProvider = lsp::RenameOptions {
                     .prepareProvider = true
                 },
@@ -571,6 +572,90 @@ static std::string render_decl(const ast::NamedDecl& decl) {
     return oss.str();
 }
 
+/// Prints an AST or type node the way the source spells it.
+template <typename T>
+static std::string print_to_string(const T& node) {
+    std::ostringstream oss;
+    log::Output output(oss, false);
+    Printer printer(output);
+    node.print(printer);
+    return oss.str();
+}
+
+/// The outline kind of a declaration, or nothing for declarations that do not belong in
+/// the outline at all (`let`, `use`, and anything the parser could not make sense of).
+static std::optional<lsp::SymbolKind> symbol_kind_of(const ast::Decl& decl) {
+    if (decl.isa<ast::ModDecl>())      return lsp::SymbolKind::Module;
+    if (decl.isa<ast::FnDecl>())       return lsp::SymbolKind::Function;
+    if (decl.isa<ast::StructDecl>())   return lsp::SymbolKind::Struct;
+    if (decl.isa<ast::EnumDecl>())     return lsp::SymbolKind::Enum;
+    if (decl.isa<ast::OptionDecl>())   return lsp::SymbolKind::EnumMember;
+    if (decl.isa<ast::FieldDecl>())    return lsp::SymbolKind::Field;
+    if (decl.isa<ast::TypeDecl>())     return lsp::SymbolKind::TypeParameter;
+    if (decl.isa<ast::ImplicitDecl>()) return lsp::SymbolKind::Constant;
+    if (auto static_decl = decl.isa<ast::StaticDecl>())
+        return static_decl->is_mut ? lsp::SymbolKind::Variable : lsp::SymbolKind::Constant;
+    return std::nullopt;
+}
+
+template <typename Decls>
+static void collect_document_symbols(
+    const Decls& decls,
+    const std::string& file,
+    lsp::Array<lsp::DocumentSymbol>& out);
+
+/// Turns one declaration into an outline entry, recursing into whatever it contains.
+static std::optional<lsp::DocumentSymbol> make_document_symbol(const ast::Decl& decl, const std::string& file) {
+    // A project spans several files, but the outline only ever describes the one asked for.
+    if (!decl.loc.file || *decl.loc.file != file) return std::nullopt;
+    auto kind = symbol_kind_of(decl);
+    if (!kind) return std::nullopt;
+
+    lsp::DocumentSymbol symbol;
+    symbol.kind = lsp::SymbolKindEnum(*kind);
+    symbol.range = convert_loc(decl.loc).range;
+
+    if (auto named = decl.isa<ast::NamedDecl>()) {
+        symbol.name = named->id.name;
+        symbol.selectionRange = convert_loc(named->id.loc).range;
+        symbol.detail = render_decl(*named);
+    } else {
+        // `implicit` declarations carry no identifier — the summoner picks them by type.
+        auto implicit_decl = decl.as<ast::ImplicitDecl>();
+        symbol.name = "implicit";
+        symbol.selectionRange = symbol.range;
+        if (implicit_decl->type) symbol.detail = print_to_string(*implicit_decl->type);
+        else if (decl.type) symbol.detail = print_to_string(*decl.type);
+    }
+
+    lsp::Array<lsp::DocumentSymbol> children;
+    if (auto mod_decl = decl.isa<ast::ModDecl>()) {
+        collect_document_symbols(mod_decl->decls, file, children);
+    } else if (auto struct_decl = decl.isa<ast::StructDecl>()) {
+        // A tuple-like struct numbers its fields, which says nothing in an outline.
+        if (!struct_decl->is_tuple_like) collect_document_symbols(struct_decl->fields, file, children);
+    } else if (auto enum_decl = decl.isa<ast::EnumDecl>()) {
+        collect_document_symbols(enum_decl->options, file, children);
+    } else if (auto option_decl = decl.isa<ast::OptionDecl>()) {
+        collect_document_symbols(option_decl->fields, file, children);
+    }
+    if (!children.empty()) symbol.children = std::move(children);
+
+    return symbol;
+}
+
+template <typename Decls>
+static void collect_document_symbols(
+    const Decls& decls,
+    const std::string& file,
+    lsp::Array<lsp::DocumentSymbol>& out)
+{
+    for (auto& decl : decls) {
+        if (!decl) continue;
+        if (auto symbol = make_document_symbol(*decl, file)) out.push_back(std::move(*symbol));
+    }
+}
+
 std::optional<IndentifierOccurences> find_occurrences_of_identifier(Server& server, const Loc& cursor, bool include_declaration) {
     if(Server::get_file_type(*cursor.file) != Server::FileType::SourceFile) return std::nullopt;
     server.ensure_compile(*cursor.file);
@@ -646,6 +731,21 @@ void Server::setup_events_definitions() {
             },
             .range = convert_loc(range).range
         };
+    });
+
+    message_handler_.add<reqst::TextDocument_DocumentSymbol>([this](reqst::TextDocument_DocumentSymbol::Params&& params) -> reqst::TextDocument_DocumentSymbol::Result {
+        Timer _("TextDocument_DocumentSymbol");
+        log::info("\n[LSP] <<< TextDocument DocumentSymbol {}", params.textDocument.uri.path());
+
+        if (get_file_type(params.textDocument.uri.path()) != FileType::SourceFile) return nullptr;
+        auto file = absolute_path(params.textDocument.uri.path()).generic_string();
+        ensure_compile(params.textDocument.uri.path());
+        if (!compile || !compile->program) return nullptr;
+
+        lsp::Array<lsp::DocumentSymbol> symbols;
+        collect_document_symbols(compile->program->decls, file, symbols);
+        log::info("[LSP] >>> Returning {} document symbols", symbols.size());
+        return symbols;
     });
 
     message_handler_.add<reqst::TextDocument_Definition>([this](lsp::TextDocumentPositionParams&& pos) -> reqst::TextDocument_Definition::Result {
@@ -1621,7 +1721,6 @@ void Server::setup_events_other() {
     // req::TextDocument_DocumentColor
     // req::TextDocument_DocumentHighlight
     // req::TextDocument_DocumentLink
-    // req::TextDocument_DocumentSymbol
     // req::TextDocument_FoldingRange
     // req::TextDocument_Formatting
     // req::TextDocument_Implementation

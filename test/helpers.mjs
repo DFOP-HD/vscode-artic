@@ -1,6 +1,6 @@
 // Shared helpers: locating the built server and staging fixture workspaces.
 
-import { cpSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -52,13 +52,22 @@ export function findArticBinary() {
 }
 
 /**
+ * A temp directory the server will agree with. `os.tmpdir()` is an 8.3 short path wherever
+ * the user name exceeds eight characters (`C:\Users\RUNNER~1\...` on the CI runner) and the
+ * server canonicalises that to the long form, so no published URI would ever match.
+ */
+function makeTempDir(prefix) {
+    return realpathSync.native(mkdtempSync(join(tmpdir(), prefix)));
+}
+
+/**
  * Copies a fixture into a temp directory so tests may freely modify it.
  * Returns handles plus a `cleanup()` that the caller must invoke.
  */
 export function stageFixture(name) {
     const src = join(fixturesDir, name);
     if (!existsSync(src)) throw new Error(`No such fixture: ${name}`);
-    const dir = mkdtempSync(join(tmpdir(), `artic-lsp-${name}-`));
+    const dir = makeTempDir(`artic-lsp-${name}-`);
     cpSync(src, dir, { recursive: true });
     return {
         dir,
@@ -73,7 +82,7 @@ export function stageFixture(name) {
 
 /** Builds an empty workspace with the given files. Keys may contain subdirectories. */
 export function stageFiles(files) {
-    const dir = mkdtempSync(join(tmpdir(), 'artic-lsp-adhoc-'));
+    const dir = makeTempDir('artic-lsp-adhoc-');
     const put = (relPath, content) => {
         const target = join(dir, relPath);
         mkdirSync(dirname(target), { recursive: true });

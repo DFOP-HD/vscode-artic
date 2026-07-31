@@ -29,6 +29,7 @@ describe('server lifecycle', () => {
         assert.ok(capabilities.completionProvider, 'completionProvider');
         assert.equal(capabilities.definitionProvider, true);
         assert.equal(capabilities.referencesProvider, true);
+        assert.equal(capabilities.documentSymbolProvider, true);
         assert.ok(capabilities.renameProvider, 'renameProvider');
         assert.equal(capabilities.renameProvider.prepareProvider, true);
         assert.ok(capabilities.semanticTokensProvider, 'semanticTokensProvider');
