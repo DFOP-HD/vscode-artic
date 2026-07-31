@@ -137,10 +137,24 @@ if (TARGET artic-lsp)
 endif()
 ```
 
-- Whole files that exist only for the LSP (`include/artic/name_map.h`, `src/name_map.cpp`)
-  guard their **entire body** instead of being added conditionally to the target. They are
-  listed in `src/CMakeLists.txt` unconditionally and compile to nothing without the define,
-  which keeps the file list identical in both configurations.
+- Whole files that exist only for the LSP (`include/artic/lsp.h`, `include/artic/name_map.h`,
+  `src/name_map.cpp`) guard their **entire body** instead of being added conditionally to the
+  target. They are listed in `src/CMakeLists.txt` unconditionally and compile to nothing
+  without the define, which keeps the file list identical in both configurations.
+  `lsp.h` holds the plain data types (`ls::Severity`, `ls::Diagnostic`) and must stay
+  dependency-light: `log.h` includes it, and `ast.h` includes `log.h`, so anything needing
+  `ast.h` (i.e. `NameMap`) has to live in `name_map.h` instead or the include graph cycles.
+- **A host class gets a guarded, default-initialised member — never a second constructor.**
+  `Log::diagnostics`, `NameBinder::name_map` and `TypeChecker::name_map` are all
+  `#ifdef ENABLE_LSP` members defaulting to `nullptr`, assigned by `ls::Compiler` in
+  [artic-lsp/include/compile.h](artic-lsp/include/compile.h). Threading them through the
+  constructor instead needs an `#ifdef/#else/#endif` pair per class, which triples the
+  upstream diff and touches a signature upstream also owns.
+- **Do not thread an LSP flag through a hot path.** `Printer::print_additional_node_info`
+  wrapped every printed node in `<NodeName>` tags for an `artic/debugAst` request; paying
+  for it meant a `NodeScope` line in all 54 `print()` overrides — the second-largest fork
+  footprint after `ast.h`, for a debug aid. Both it and the request were removed. If an AST
+  dump is wanted again, build it in `artic-lsp/` on top of `traverse()`.
 - **Documented exception:** the AST traversal in [artic/include/artic/ast.h](artic/include/artic/ast.h)
   (`Node::TraverseFn`, `traverse()`, and 54 one-line `traverse_children()` overrides) is
   LSP-only but deliberately **not** guarded. Guarding it needs an `ARTIC_TRAVERSE_CHILDREN(...)`
@@ -164,7 +178,8 @@ ctest --test-dir artic-lsp/buildNoLsp -E "^thorin_"
   currently: the `err.stream` fix in `log.h`, uninitialised `Loc::Pos` members, the
   `std::is_pod` → `is_standard_layout && is_trivial` fix in `hash.h` (`is_pod` is deprecated
   in C++20), lexer/parser/`ast.cpp` error tolerance, the type-checker error tolerance in
-  `check.cpp`, the `pop_scope` warning fix, the `usage()` text in `main.cpp`, and the
+  `check.cpp`, the `pop_scope` warning fix, `Node::dump()`/`Type::dump()` writing to
+  `log::err` instead of `log::out`, the `usage()` text in `main.cpp`, and the
   `file(row, col)` → `file:row:col` location format in `loc.h` (a separate, purely cosmetic
   change — terminal-clickable, but user-visible). The unmerged `origin/error-tolerance`
   branch is relevant prior art.
@@ -284,20 +299,23 @@ Ordered. Keep status markers current.
    [test/optional-includes.test.mjs](test/optional-includes.test.mjs) and
    [test/detect-config.test.mjs](test/detect-config.test.mjs).
 5. **Clean up the artic fork** — *done*. Divergence from the merge base went from
-   **+645 / −89 across 19 files** to **+470 / −68 across 17 files** plus two fully
+   **+645 / −89 across 19 files** to **+332 / −65 across 16 files** plus three fully
    self-guarded new files. What was done:
    - Deleted fork noise: `.gitmodules` (referenced a `lsp-framework` submodule that does not
      exist) and `build.sh` (hardcoded `$HOME/repos/...`).
    - Reverted pure churn: `include/artic/parser.h`, the `main.cpp` usage-text rewrite,
-     whitespace-only edits in `bind.cpp`, and debug leftovers (`// fn->dump();`).
-   - Extracted the LSP symbol index into `include/artic/name_map.h` + `src/name_map.cpp`,
-     both guarded in their entirety.
-   - Guarded the remaining LSP-only code in `bind.h`, `check.h`, `print.h`, `log.h`,
-     `bind.cpp`, `check.cpp` and `print.cpp`. See
-     [Working with the artic/ submodule](#working-with-the-artic-submodule) for the
-     conventions and the one documented exception (`ast.h`).
-   - Removed the dead `Node::print_node()` declaration — never defined, never called.
-   - Fixed a real regression the fork had introduced (see the `pop_scope` gotcha below).
+     whitespace-only edits in `bind.cpp` and `ast.h`, and debug leftovers (`// fn->dump();`).
+   - Extracted the LSP types into `include/artic/lsp.h`, `include/artic/name_map.h` and
+     `src/name_map.cpp`, all guarded in their entirety. `include/artic/print.h` is back to
+     upstream and `src/print.cpp` is down from +99 lines to four.
+   - Guarded the remaining LSP-only code in `bind.h`, `check.h`, `log.h`, `bind.cpp` and
+     `check.cpp`. See [Working with the artic/ submodule](#working-with-the-artic-submodule)
+     for the conventions and the one documented exception (`ast.h`).
+   - Removed dead code: the `Node::print_node()` declaration (never defined, never called),
+     an unused `const artic::Type* t` in `LetDecl::infer`, and restored upstream's
+     `ModDecl::members` that the fork had deleted.
+   - Fixed two real regressions the fork had introduced: the `pop_scope` gotcha below, and
+     `ContinueExpr::infer` reporting `"break expression"` (copy-paste from `BreakExpr`).
    The upstreamable set is listed under the submodule section; PR'ing it to AnyDSL/artic is
    still open.
 6. **Cursor editor support** — make the extension installable and functional in Cursor

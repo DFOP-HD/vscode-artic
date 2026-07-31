@@ -15,11 +15,14 @@ namespace artic::ls{
 struct Compiler {
     Compiler()
         : arena(), type_table(), locator()
-        , log(log::err, &locator, 0, 0, &diagnostics)
-        , name_binder(log, &name_map)
-        , type_checker(log, type_table, arena, &name_map)
+        , log(log::err, &locator)
+        , name_binder(log)
+        , type_checker(log, type_table, arena)
     {
         log.max_errors = 100;
+        log.diagnostics = &diagnostics;
+        name_binder.name_map = &name_map;
+        type_checker.name_map = &name_map;
         type_checker.warns_as_errors = warns_as_errors;
         name_binder.warns_as_errors = warns_as_errors;
         if (enable_all_warns)

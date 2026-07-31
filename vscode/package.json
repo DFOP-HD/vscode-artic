@@ -67,11 +67,6 @@
         "command": "artic.detectWorkspaceConfiguration",
         "title": "Detect workspace configuration",
         "category": "Artic"
-      },
-      {
-        "command": "artic.debugAst",
-        "title": "Debug: Show AST Node at Cursor",
-        "category": "Artic"
       }
     ],
     "configuration": {

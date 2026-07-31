@@ -1253,10 +1253,10 @@ void Server::compile_this_and_related_files(std::filesystem::path file, std::str
             .end   = lsp::Position { static_cast<lsp::uint>(diag.loc.end.row   - 1), static_cast<lsp::uint>(diag.loc.end.col   - 1) }
         };
         switch (diag.severity) {
-            case Diagnostic::Error:   lsp_diag.severity = lsp::DiagnosticSeverity::Error;       break;
-            case Diagnostic::Warning: lsp_diag.severity = lsp::DiagnosticSeverity::Warning;     break;
-            case Diagnostic::Info:    lsp_diag.severity = lsp::DiagnosticSeverity::Information; break;
-            case Diagnostic::Hint:    lsp_diag.severity = lsp::DiagnosticSeverity::Hint;        break;
+            case Severity::Error:   lsp_diag.severity = lsp::DiagnosticSeverity::Error;       break;
+            case Severity::Warning: lsp_diag.severity = lsp::DiagnosticSeverity::Warning;     break;
+            case Severity::Info:    lsp_diag.severity = lsp::DiagnosticSeverity::Information; break;
+            case Severity::Hint:    lsp_diag.severity = lsp::DiagnosticSeverity::Hint;        break;
         }
         return lsp_diag;
     };
@@ -1422,67 +1422,7 @@ void Server::reload_workspace(const std::string& active_file) {
 //
 //
 // -----------------------------------------------------------------------------
-namespace artic::reqst {
-    struct DebugAst {
-        static constexpr auto Method = std::string_view("artic/debugAst");
-        static constexpr auto Direction = lsp::MessageDirection::ClientToServer;
-        static constexpr auto Type = lsp::Message::Request;
-        using Params = lsp::TextDocumentPositionParams;
-        using Result = lsp::Nullable<std::string>;
-    };
-}
-
 void Server::setup_events_other() {
-
-    // Custom debug command to print AST at cursor position
-    message_handler_.add<artic::reqst::DebugAst>([this](lsp::TextDocumentPositionParams&& params) -> artic::reqst::DebugAst::Result {
-        Timer _("artic/debugAst");
-        
-        log::info("\n[LSP] <<< artic/debugAst {}:{}:{}", params.textDocument.uri.path(), params.position.line + 1, params.position.character + 1);
-
-        auto file = absolute_path(params.textDocument.uri.path());
-        if(get_file_type(file) != FileType::SourceFile) return nullptr;
-        ensure_compile(file.generic_string());
-        if (!compile || !compile->program) {
-            throw lsp::RequestError(lsp::Error::InternalError, "No compilation result available");
-        }
-
-        Loc cursor = convert_loc(params.textDocument, params.position);
-        const ast::Node* inner_node = nullptr;
-        const ast::Node* outer_node = nullptr;
-
-        // Find the AST node at the cursor position
-        ast::Node::TraverseFn traverse([&](const ast::Node& node) -> bool {
-            if (node.loc.file && same_file(node.loc, cursor) && overlaps(node.loc, cursor)) {
-                if(!outer_node) {
-                    outer_node = &node;
-                }
-                inner_node = &node;
-                return true; // Continue to find the most specific node
-            }
-            return true;
-        });
-        
-        traverse(compile->program);
-
-        if (!outer_node || !inner_node) {
-            return nullptr;
-            log::info("[LSP] >>> No AST node found at cursor");
-        }
-        log::info("[LSP] >>> Found AST node at cursor");
-        // Print the AST node to a string
-        std::stringbuf buffer;
-        std::ostream stream(&buffer);
-        log::Output output(stream, false);
-        Printer printer(output);
-        printer.print_additional_node_info = true;
-        
-        output << "Inner Node: \n";
-        inner_node->print(printer);
-        output << "Outer Node: \n";
-        outer_node->print(printer);
-        return buffer.str();
-    });
 
     message_handler_.add<reqst::TextDocument_InlayHint>([this](reqst::TextDocument_InlayHint::Params&& params) -> reqst::TextDocument_InlayHint::Result {
         Timer _("TextDocument_InlayHint");
