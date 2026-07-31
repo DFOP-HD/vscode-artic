@@ -177,6 +177,7 @@ void Server::setup_events_initialization() {
                 .completionProvider = lsp::CompletionOptions{
                     .triggerCharacters = std::vector<std::string>{".", ":"}
                 },
+                .hoverProvider = true,
                 .definitionProvider = true,
                 .referencesProvider = true,
                 .renameProvider = lsp::RenameOptions {
@@ -494,6 +495,82 @@ struct IndentifierOccurences{
     lsp::Location declaration_range;
 };
 
+/// Renders a declaration the way it is written in source, but without its body.
+static std::string render_decl(const ast::NamedDecl& decl) {
+    std::ostringstream oss;
+    log::Output output(oss, false);
+    Printer printer(output);
+
+    auto print = [&](const ast::Node* node) { if (node) node->print(printer); };
+    auto print_declared_type = [&](const ast::Type* declared) {
+        if (declared) declared->print(printer);
+        else if (decl.type) decl.type->print(printer);
+        else oss << '?';
+    };
+
+    if (auto fn_decl = decl.isa<ast::FnDecl>()) {
+        const auto& fn = *fn_decl->fn;
+        oss << "fn " << decl.id.name;
+        print(fn_decl->type_params.get());
+        if (fn.param) {
+            // A tuple pattern brings its own parentheses, a single parameter does not.
+            if (!fn.param->is_tuple()) oss << '(';
+            fn.param->print(printer);
+            if (!fn.param->is_tuple()) oss << ')';
+        }
+        if (fn.ret_type) {
+            oss << " -> ";
+            fn.ret_type->print(printer);
+        } else if (auto fn_type = decl.type ? decl.type->isa<artic::FnType>() : nullptr) {
+            oss << " -> ";
+            fn_type->codom->print(printer);
+        }
+    } else if (auto struct_decl = decl.isa<ast::StructDecl>()) {
+        oss << "struct " << decl.id.name;
+        print(struct_decl->type_params.get());
+    } else if (auto enum_decl = decl.isa<ast::EnumDecl>()) {
+        oss << "enum " << decl.id.name;
+        print(enum_decl->type_params.get());
+    } else if (auto option_decl = decl.isa<ast::OptionDecl>()) {
+        if (option_decl->parent) oss << option_decl->parent->id.name << "::";
+        oss << decl.id.name;
+        if (option_decl->param) {
+            oss << '(';
+            option_decl->param->print(printer);
+            oss << ')';
+        }
+    } else if (auto type_decl = decl.isa<ast::TypeDecl>()) {
+        oss << "type " << decl.id.name;
+        print(type_decl->type_params.get());
+        oss << " = ";
+        print(type_decl->aliased_type.get());
+    } else if (auto static_decl = decl.isa<ast::StaticDecl>()) {
+        oss << "static ";
+        if (static_decl->is_mut) oss << "mut ";
+        oss << decl.id.name << ": ";
+        print_declared_type(static_decl->type.get());
+    } else if (auto field_decl = decl.isa<ast::FieldDecl>()) {
+        oss << decl.id.name << ": ";
+        print_declared_type(field_decl->type.get());
+    } else if (auto ptrn_decl = decl.isa<ast::PtrnDecl>()) {
+        if (ptrn_decl->is_mut) oss << "mut ";
+        oss << decl.id.name << ": ";
+        print_declared_type(nullptr);
+    } else if (decl.isa<ast::ModDecl>()) {
+        oss << "mod " << decl.id.name;
+    } else if (decl.isa<ast::TypeParam>()) {
+        oss << "type " << decl.id.name;
+    } else {
+        oss << decl.id.name;
+        if (decl.type) {
+            oss << ": ";
+            decl.type->print(printer);
+        }
+    }
+
+    return oss.str();
+}
+
 std::optional<IndentifierOccurences> find_occurrences_of_identifier(Server& server, const Loc& cursor, bool include_declaration) {
     if(Server::get_file_type(*cursor.file) != Server::FileType::SourceFile) return std::nullopt;
     server.ensure_compile(*cursor.file);
@@ -536,6 +613,41 @@ std::optional<IndentifierOccurences> find_occurrences_of_identifier(Server& serv
 }
 
 void Server::setup_events_definitions() {
+    message_handler_.add<reqst::TextDocument_Hover>([this](reqst::TextDocument_Hover::Params&& params) -> reqst::TextDocument_Hover::Result {
+        Timer _("TextDocument_Hover");
+        log::info("\n[LSP] <<< TextDocument Hover {}:{}:{}", params.textDocument.uri.path(), params.position.line + 1, params.position.character + 1);
+
+        if(get_file_type(params.textDocument.uri.path()) != FileType::SourceFile) return nullptr;
+        auto cursor = convert_loc(params.textDocument, params.position);
+        ensure_compile(params.textDocument.uri.path());
+        auto& name_map = compile->name_map;
+
+        // On a declaration the identifier itself is the range to highlight; on a reference
+        // it is the occurrence under the cursor, not the declaration it points at.
+        const ast::NamedDecl* decl = name_map.find_decl_at(cursor);
+        Loc range = decl ? decl->id.loc : Loc();
+        if (!decl) {
+            auto ref = name_map.find_ref_at(cursor);
+            if (!ref) {
+                log::info("[LSP] >>> Hover found no symbol at cursor");
+                return nullptr;
+            }
+            decl = name_map.find_decl(*ref);
+            range = name_map.get_identifier(*ref).loc;
+        }
+        if (!decl) return nullptr;
+
+        auto signature = render_decl(*decl);
+        log::info("[LSP] >>> Hover '{}'", signature);
+        return lsp::Hover {
+            .contents = lsp::MarkupContent {
+                .kind = lsp::MarkupKindEnum(lsp::MarkupKind::Markdown),
+                .value = "```artic\n" + signature + "\n```"
+            },
+            .range = convert_loc(range).range
+        };
+    });
+
     message_handler_.add<reqst::TextDocument_Definition>([this](lsp::TextDocumentPositionParams&& pos) -> reqst::TextDocument_Definition::Result {
         Timer _("TextDocument_Definition");
         log::info("\n[LSP] <<< TextDocument Definition {}:{}:{}", pos.textDocument.uri.path(), pos.position.line + 1, pos.position.character + 1);
@@ -1512,7 +1624,6 @@ void Server::setup_events_other() {
     // req::TextDocument_DocumentSymbol
     // req::TextDocument_FoldingRange
     // req::TextDocument_Formatting
-    // req::TextDocument_Hover
     // req::TextDocument_Implementation
     // req::TextDocument_InlayHint
     // req::TextDocument_InlineCompletion

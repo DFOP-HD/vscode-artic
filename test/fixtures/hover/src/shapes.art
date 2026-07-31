@@ -1,0 +1,38 @@
+// Fixture: one declaration of every kind hover has to render.
+// Written for this repository - do not replace with code from other AnyDSL projects.
+
+struct Point {
+    x: i32,
+    y: i32
+}
+
+enum Shape {
+    Empty,
+    Dot(Point)
+}
+
+type Distance = i32;
+
+static ORIGIN: Point = Point { x = 0, y = 0 };
+
+fn manhattan(p: Point) -> Distance {
+    let dx = p.x - ORIGIN.x;
+    let dy = p.y - ORIGIN.y;
+    dx + dy
+}
+
+fn pick[T](cond: bool, a: T, b: T) -> T {
+    if cond { a } else { b }
+}
+
+fn area(s: Shape) -> Distance {
+    match s {
+        Shape::Empty => 0,
+        Shape::Dot(p) => manhattan(p)
+    }
+}
+
+fn main() -> i32 {
+    let corner = Point { x = 3, y = 4 };
+    pick(true, area(Shape::Dot(corner)), 0)
+}

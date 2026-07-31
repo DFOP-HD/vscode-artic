@@ -333,10 +333,20 @@ already exists: `ls::NameMap` (`find_decl_at`, `find_ref_at`, `find_decl`, `find
 handler already uses. The commented-out capability list at the bottom of
 [artic-lsp/src/server.cpp](artic-lsp/src/server.cpp) is the full menu of what is missing.
 
-8. **Hover** — the largest perceived gap; every user expects it. `find_ref_at` /
-   `find_decl_at` at the cursor, then render the declaration kind (fn / struct / enum / let /
-   param / mod), its qualified name and its type. For functions show the full signature
-   including implicit parameters. Pure server-side, no fork change.
+8. **Hover** — *done*. `TextDocument_Hover` is registered in `setup_events_definitions()` and
+   `hoverProvider` is advertised. It resolves the cursor with `find_decl_at`, falling back to
+   `find_ref_at` + `find_decl`, and renders the declaration as a fenced ```artic``` block via
+   `render_decl()` in [artic-lsp/src/server.cpp](artic-lsp/src/server.cpp). **The renderer
+   must never call `decl.print()`** — every `Decl::print` overload emits the body (and
+   `StructDecl`'s emits every field), which is a wall of text in a hover popup. It prints the
+   keyword and identifier itself and delegates only to the sub-nodes that belong in a
+   signature (`type_params`, `fn->param`, `fn->ret_type`, `aliased_type`), falling back to the
+   inferred `Node::type` where the source has no annotation (`let` bindings, inferred return
+   types). `fn->param` brings its own parentheses only when it is a tuple pattern — that is
+   what upstream's `print_parens()` handles, and it is `static` in `print.cpp`, so the check
+   is duplicated rather than exported. Guarded by [test/hover.test.mjs](test/hover.test.mjs)
+   against [test/fixtures/hover/src/shapes.art](test/fixtures/hover/src/shapes.art), which
+   holds one declaration of every kind the renderer branches on.
 9. **Document symbols** — powers the outline view, breadcrumbs and Ctrl+Shift+O. One
    traversal of the file's `ModDecl` emitting a hierarchical `DocumentSymbol` tree for
    mod / fn / struct / enum / variant / field / static / type alias / implicit.
@@ -449,3 +459,9 @@ handler already uses. The commented-out capability list at the bottom of
   `std::filesystem::path::u8string()` on Windows, which hid a bug that broke diagnostics
   entirely on MSVC. Run the suite against a second binary with `ARTIC_LSP_BIN` before
   calling protocol-level work done.
+- **`ARTIC_LSP_BIN` outlives the command that set it.** The terminal session is persistent,
+  so a leftover `$env:ARTIC_LSP_BIN` from an earlier cross-toolchain run silently points the
+  whole suite at a stale binary. A brand-new handler then fails with `Method not found` and
+  the capability reads `undefined`, which looks exactly like a registration bug in code that
+  is actually fine. `Remove-Item Env:ARTIC_LSP_BIN` when done, and check it first when a
+  freshly built feature appears to be missing.

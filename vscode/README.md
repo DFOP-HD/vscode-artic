@@ -11,6 +11,7 @@ Note: The language server is currently in an alpha stage. Please report any tech
 
 - Syntax highlighting
 - Diagnostics (errors, warnings, hints)
+- Hover (declaration signature and type)
 - Go to definition
 - Find references
 - Rename action
