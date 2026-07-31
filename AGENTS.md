@@ -123,6 +123,11 @@ git -C artic diff --stat upstream/master...HEAD
 ```
 
   (`upstream` = `https://github.com/AnyDSL/artic.git`; add it if missing.)
+- **When a fork change is acceptable at all:** an LSP-only addition is fine behind
+  `ENABLE_LSP` as long as it does not change actual compiler behaviour. If it cannot be
+  guarded without becoming too intrusive or too unreadable — and dropping the guard would be
+  bad practice — then do not make the change; find a server-side approach, or drop the
+  feature.
 - LSP-only additions to artic must be guarded with `#ifdef ENABLE_LSP`. The define is applied
   in [artic/src/CMakeLists.txt](artic/src/CMakeLists.txt) when the `artic-lsp` target exists:
 
@@ -300,6 +305,81 @@ Ordered. Keep status markers current.
 7. **Restore Linux support** — development has moved to Windows and Linux has regressed.
    Re-verify the build (`artic-lsp/build.sh`), the packaging scripts (`vscode/build-lsp.sh`,
    `vscode/package.sh`), path handling, and run the test suite there.
+
+### Language features
+
+Ordered by value/effort. Items 8–12 need no submodule change and reuse infrastructure that
+already exists: `ls::NameMap` (`find_decl_at`, `find_ref_at`, `find_decl`, `find_refs` in
+[artic/include/artic/name_map.h](artic/include/artic/name_map.h)),
+`ast::Node::traverse_children()` with `TraverseFn`, and the type printer the inlay-hint
+handler already uses. The commented-out capability list at the bottom of
+[artic-lsp/src/server.cpp](artic-lsp/src/server.cpp) is the full menu of what is missing.
+
+8. **Hover** — the largest perceived gap; every user expects it. `find_ref_at` /
+   `find_decl_at` at the cursor, then render the declaration kind (fn / struct / enum / let /
+   param / mod), its qualified name and its type. For functions show the full signature
+   including implicit parameters. Pure server-side, no fork change.
+9. **Document symbols** — powers the outline view, breadcrumbs and Ctrl+Shift+O. One
+   traversal of the file's `ModDecl` emitting a hierarchical `DocumentSymbol` tree for
+   mod / fn / struct / enum / variant / field / static / type alias / implicit.
+10. **Document highlight, and fix `definition` on a declaration** — do these together.
+    `textDocument/definition` currently returns *all references* when the cursor sits on a
+    declaration; that is what documentHighlight and references are for, and it makes
+    Go-to-Definition behave unexpectedly. Definition on a declaration should return the
+    declaration itself, and `find_refs(decl)` filtered to the current file becomes
+    documentHighlight instead — so no capability is lost.
+11. **`didClose` is a no-op** — diagnostics for a file that is closed while still broken are
+    never cleared, and the file stays in the compile set.
+12. **Selection range** — Shift+Alt+Right. Walk the AST spine at the cursor and emit the
+    nested `Loc` ranges.
+13. **Signature help** — find the enclosing `CallExpr` and the argument index, then render
+    the callee's `FnType`. Worth more in Artic than in most languages, because it is the
+    natural place to show which parameters are implicit.
+14. **Go to type definition** — `expr->type`, unwrapped through `TypeApp`, to the originating
+    `StructType` / `EnumType` declaration.
+15. **Go to implementation for implicits / `summon`** — jump from a summoned implicit to the
+    instance the `Summoner` actually selected. Genuinely novel for Artic, and not obtainable
+    from `NameMap` alone: the Summoner has to record its choice. That is a fork change and is
+    therefore subject to the `ENABLE_LSP` policy above — if the choice cannot be recorded
+    behind a clean guard, drop the item rather than weaken the guard.
+16. **Workspace symbols (Ctrl+T)** — needs an index spanning every project in the config, not
+    just the active one. Blocked on the server holding a single `std::optional<Compiler>`;
+    deciding how to index without keeping every project compiled is the actual work here.
+    **Code lens** (reference counts above declarations) is cheap once that index exists, so
+    schedule the two together.
+17. **Parameter-name inlay hints** at call sites, from the callee's `FnType` parameter names.
+    The existing hint handler only covers declaration types.
+18. **Completion polish** — no resolve handler, no documentation, no `use`-path completion,
+    and the loop-variable bug marked `TODO` in
+    [artic-lsp/src/server.cpp](artic-lsp/src/server.cpp) (a `for a in ...` binding is offered
+    outside the loop). Real documentation depends on item 19.
+19. **Doc comments** — the lexer discards `///`, so nothing can surface documentation in
+    hover or completion. Capturing them is a fork change under the `ENABLE_LSP` policy, and
+    it must not alter tokenisation for the standalone compiler.
+
+### Deferred
+
+- **Performance and protocol modernisation** — text sync is `Full` (the whole buffer on every
+  keystroke), every change recompiles the entire project and rebuilds the `NameMap` from
+  scratch, diagnostics are push-only, and there is no `$/progress` during a compile.
+  **No performance problem has actually been observed**, so this is not scheduled. Revisit
+  only if a change here is non-intrusive and carries no crash risk.
+- **Minor gaps** — semantic tokens have no delta support and never emit the `deprecated` or
+  `defaultLibrary` modifiers; call hierarchy is derivable from `references_of` plus an
+  enclosing-function lookup; rename performs no collision, shadowing or valid-identifier
+  check.
+
+### Parked — do not start without explicit approval
+
+- **Formatting** (`textDocument/formatting` and friends). The obvious basis,
+  [artic/src/print.cpp](artic/src/print.cpp), is a debug printer, not a formatter: it does
+  **not preserve comments**, and it is suspected to change which types end up implicitly
+  declared or inferred. A formatter that silently rewrites the meaning of a program is worse
+  than no formatter. Worth doing eventually, but **only once the owner explicitly approves
+  starting it.**
+- **Code actions / quick fixes** — the highest-polish feature and the highest effort: it
+  requires diagnostics to carry structured fix data out of the type checker, which is a
+  substantial fork change.
 
 ## Gotchas
 
