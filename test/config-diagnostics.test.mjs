@@ -160,4 +160,29 @@ describe('config diagnostics', () => {
         assert.ok(diags.some((d) => /bogus-key/.test(d.message)));
         ws.cleanup();
     });
+
+    // The README documents that artic.json is plain JSON. Older examples used
+    // JSON-with-comments, which silently made the whole config unusable.
+    test('rejects a config file containing comments', async () => {
+        ws = stageFiles({
+            'artic.json':
+                '{\n' +
+                '    // the config format does not allow comments\n' +
+                '    "artic-config": "2.0",\n' +
+                '    "projects": [{ "name": "p", "files": ["*.art"] }]\n' +
+                '}\n',
+            'a.art': 'fn main() -> i32 { 0 }\n',
+        });
+        const uri = ws.fileUri('artic.json');
+        client.openDocument(uri, ws.read('artic.json'), 'json');
+
+        const diags = await waitForDiagnosticsMatching(
+            client, uri, (d) => d.some(isError), 'parse error for a commented config',
+        );
+        assert.ok(
+            diags.some((d) => /Failed to parse json/.test(d.message)),
+            `expected a json parse error, got ${JSON.stringify(diags)}`,
+        );
+        ws.cleanup();
+    });
 });

@@ -396,6 +396,13 @@ handler already uses. The commented-out capability list at the bottom of
   `defaultLibrary` modifiers; call hierarchy is derivable from `references_of` plus an
   enclosing-function lookup; rename performs no collision, shadowing or valid-identifier
   check.
+- **Comments in `artic.json`** — the config is read with `is >> j`, i.e. nlohmann's defaults, so
+  `//` is a parse error. The README examples were written with comments for years and were
+  therefore not copy-pasteable. Enabling `ignore_comments` is one line, but the document selector
+  in [vscode/src/extension.ts](vscode/src/extension.ts) matches `language: 'json'`, so the file
+  would also need a `jsonc` filename association to stop VS Code's own validator flagging them,
+  and the selector would have to accept both languages or config diagnostics stop arriving.
+  Documented as a limitation in the README instead.
 
 ### Parked — do not start without explicit approval
 
@@ -411,6 +418,14 @@ handler already uses. The commented-out capability list at the bottom of
 
 ## Gotchas
 
+- **A `catch` block runs after the RAII file-context scope has already unwound.**
+  `ConfigParser::parse()` wraps its whole body in `try`, and `ConfigLog::scoped_file()` restores
+  the previous context from its destructor — which fires while the exception propagates, before
+  the handler. So the `log.error()` in the handler had no file to report against and the server
+  quietly logged `Dropping config message with no reportable file`: **a plain JSON syntax error in
+  `artic.json` produced no diagnostic at all.** The handler re-establishes the scope now. Guarded
+  by the `rejects a config file containing comments` case in
+  [test/config-diagnostics.test.mjs](test/config-diagnostics.test.mjs).
 - **`NameBinder::pop_scope()` is where "unused identifier" is reported, so a wrong early-out
   there disables the warning globally and silently.** The fork suppressed it for function
   prototypes (which bind parameters but have no body to use them in) with

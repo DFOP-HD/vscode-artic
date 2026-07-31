@@ -167,6 +167,9 @@ bool ConfigParser::parse() {
         }
         return true;
     } catch (const std::exception& e) {
+        // The scoped file context has already unwound by the time we get here, so it
+        // has to be re-established or the message is dropped for having no file.
+        auto ctx = log.scoped_file(origin.path);
         log.error(std::string("Failed to parse json ") + origin.path.generic_string() + ": " + e.what());
         return false;
     }

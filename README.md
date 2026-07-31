@@ -1,196 +1,188 @@
 # AnyDSL - Artic Language Server
 
-Visual Studio Code Language support for AnyDSL's Impala programming language.\
-The language server is based on a fork of the Artic compiler frontend and continuously compiles your code as you write it.
+Visual Studio Code language support for [AnyDSL](https://anydsl.github.io/)'s Artic language.
 
-Note: The language server is currently in an alpha stage. Please report any technical or non-technical problems.
+The server is built on a fork of the Artic compiler frontend and recompiles your project as you
+type, so diagnostics and navigation come from the real type checker rather than from a heuristic
+parser.
+
+Note: The language server is currently in an alpha stage. Please report any technical or
+non-technical problems.
 
 ![demo](vscode/docs/media/demo.gif)
 
 ## Features
 
-- Syntax highlighting
-- Diagnostics (errors, warnings, hints)
-- Hover (declaration signature and type)
-- Go to definition
-- Find references
-- Rename action
-- Code completion (available symbols)
-- Code snippets (for loops, function declarations, ...)
+- Diagnostics (errors, warnings and hints) from the real lexer, parser, name binder and type checker
+- Hover: declaration signature and inferred type
+- Go to definition and find references
+- Rename
+- Code completion for the symbols in scope
+- Inlay hints for inferred types
+- Semantic highlighting on top of the TextMate grammar
+- Snippets for loops, function declarations and other common constructs
+- Diagnostics for the `artic.json` configuration file itself
 
 ## Limitations
 
-- Supports x86_64 Linux (Windows support is experimental)
-- Does not support the legacy Impala syntax
-- Workspace configuration file must be in root workspace folder (TODO)
-
+- x86_64 only
+- The legacy Impala syntax is not supported, even in `.impala` files
+- The workspace configuration file must be in the root workspace folder
+- `artic.json` is plain JSON: comments and trailing commas are rejected
+- Pre-built releases currently contain the Linux server binary only. On Windows,
+  [build the server](#building) and point `artic.serverPath` at it.
 
 ## Usage
 
-1. [Install extension](#installation)
-2. Open a `.impala` or `.art` file in VS Code.
-    - The extension will automatically start the Artic language server.
-    - You will see syntax highlighting and LSP features such as diagnostics.
-3. Create a [workspace configuration file](#workspace-configuration-file) `artic.json`
-4. Create a [global configuration file](#global-configuration-file) `artic-global.json`
+1. [Install the extension](#installation).
+2. Open a `.art` or `.impala` file. The extension starts the language server automatically.
+3. Create a [workspace configuration file](#workspace-configuration-file) so the server knows which
+   files belong together. Without one, a file is compiled on its own and everything it expects from
+   another file is reported as unknown.
 
 ## Installation
 
-1. Download the latest release of the extension [here](https://github.com/DFOP-HD/vscode-artic/releases).
+1. Download the latest release [from GitHub](https://github.com/DFOP-HD/vscode-artic/releases).
+2. Install the `.vsix`:
+    - VS Code: `Ctrl+Shift+P`, then `Extensions: Install from VSIX...`, or run
+      `code --install-extension artic-language-server-<version>.vsix`
+    - Cursor: `cursor --install-extension artic-language-server-<version>.vsix`
 
-2. Install the extension using one of these options:
-    - a) Open the command palette in VS Code with `Ctrl+Shift+P`, select `Extensions: Install from VSIX...` and then select the downloaded `.vsix` file.
-    - b) Run this command in the terminal: `code --install-extension artic-language-server-<version>.vsix`
+The extension is not published to the Visual Studio Marketplace or to Open VSX, so it cannot be
+installed from the extensions panel.
+
+## Commands
+
+| Command | Description |
+| ------- | ----------- |
+| `Artic: Restart Artic Language Server` | Restarts the server process. |
+| `Artic: Detect workspace configuration` | Scans the workspace for `.sln`, `build.ninja` and `.vcxproj` files that invoke artic and adds them to `artic.json`. |
+
+## Settings
+
+| Setting | Default | Description |
+| ------- | ------- | ----------- |
+| `artic.serverPath` | `""` | Path to the `artic-lsp` binary. When empty, the bundled binary is used, falling back to `artic-lsp` on `PATH`. |
+| `artic.trace.server` | `"off"` | Traces the communication between the editor and the server. One of `off`, `messages`, `verbose`. |
 
 ## Workspace Configuration File
 
-Create a workspace configuration file `artic.json` at the root of your workspace.
-
-This configuration file tells the language server which files are associated with your project and should therefore be compiled together.
-This is essential to give you good diagnostics and 'go to definition' functionality
+Create `artic.json` in the root of your workspace. It tells the language server which files belong
+to which project and are therefore compiled together, which is what makes diagnostics and
+go-to-definition correct across file boundaries.
 
 If your project is already built with CMake, run **Artic: Detect workspace configuration** from the
-command palette. It scans the workspace for `.sln`, `build.ninja` and `.vcxproj` files that invoke
-artic and adds them to `artic.json` as optional includes, so the config stays valid before the first
-build.
-
-Example:
+command palette. It scans for `.sln`, `build.ninja` and `.vcxproj` files that invoke artic and adds
+them as optional includes, so the configuration stays valid before the first build.
 
 ```json
 {
-    // configuration header (includes version in case the config file format changes in the future)
-    "artic-config": "1.0",
-
-    // all projects defined in this workspace
-    "projects": [ 
+    "artic-config": "2.0",
+    "projects": [
         {
-            "name": "my project",     // name of the project (must be unique)
-            "folder": "",             // root folder of the project (optional, defaults to location of the configuration file)
-            "dependencies": [
-                "runtime",     // include all files of the project 'runtime'     (and it's dependencies)
-                "artic-utils"  // include all files of the project 'artic-utils' (and it's dependencies)
-            ],
+            "name": "my_project",
+            "folder": "",
+            "dependencies": ["runtime", "artic-utils"],
             "files": [
-                "/home/gruen/absolute.art", // include single file (absolute path)
-                "relative.art",             // include single file (relative to project folder)
-                "!src/exclude.impala",      // exclude file(s) with '!' prefix
-                "wi?d*rd.art",              // wildcard '?' substitute a single character, '*' substitutes multiple characters
-                "**/*.impala"               // include files recursively with '**'
+                "src/**/*.art",
+                "!src/experimental.art"
             ]
         }
     ],
-
-    // recursively include projects from other configuration files (paths do not support wildcards)
     "include": [
-        "../anydsl/runtime/artic.json",       // here: defines project runtime
-        "../anydsl/artic-utils/artic.json",   // here: defines project artic-utils
-
-        // a Visual Studio project: the files are taken from its 'artic.exe ...' build command
-        "../build/my_kernel.vcxproj",
-
-        // a whole solution: expands to the .vcxproj files it lists.
-        // projects that do not invoke artic are skipped silently
-        "../build/anydsl.sln",
-
-        // a ninja build directory: every target whose command line invokes artic
-        // becomes a project named after the file it generates
-        "../build/build.ninja?",
-
-        // include projects from global config 'artic-global.json' (path specified in extension settings). 
-        // also active even when "<global>" is not explicitly specified
-        "<global>",                           
-
-        // mark include as optional with '?' postfix 
-        // (useful as a fallback for projects assumed to be included by 'artic-global.json') 
-        "~/repos/anydsl/optional/artic.json?" 
+        "../anydsl/runtime/artic.json",
+        "../anydsl/artic-utils/artic.json",
+        "../build/build.ninja?"
     ],
-    
-    // default project (usually only defined in 'artic-global.json'):
-    // When you open a file that does not belong to any known project 
-    // (i.e. projects that are defined or recursively included in your global or workspace config),
-    // the language server will compile that file along with the files of the default project
     "default-project": {
         "name": "default project",
-        "dependencies": [
-            "runtime" // usually includes default dependencies like this runtime library
-        ],
+        "dependencies": ["runtime"],
         "files": []
-    },
+    }
 }
 ```
 
-## Global Configuration File
-Create a global configuration file `artic-global.json` (e.g. in `HOME`) and specify the path to the file in the extension settings
+### Top-level keys
 
-Example:
+| Key | Description |
+| --- | ----------- |
+| `artic-config` | Format version. Required, and must be `"2.0"`. |
+| `projects` | The projects defined by this file. |
+| `include` | Other configuration or build files to take projects from. Paths do not support wildcards. |
+| `default-project` | Compiled together with any file that belongs to no known project. |
 
-```json
-{
-    "artic-config": "1.0",
+### Project keys
 
-    // the global configuration file typically includes a default project definition
-    "default-project": {
-        "name": "default project",
-        "dependencies": [
-            "runtime"
-        ],
-        "files": []
-    },
+| Key | Description |
+| --- | ----------- |
+| `name` | Unique project name. Required. |
+| `folder` | Project root. Optional; defaults to the directory containing the configuration file. |
+| `dependencies` | Names of other projects whose files are compiled together with this one, transitively. |
+| `files` | File patterns, relative to `folder` unless absolute. |
 
-    // defined projects are globally available
-    "projects": [],
+File patterns support `?` for a single character, `*` for multiple characters and `**` for
+recursion. A `!` prefix excludes matches, for example `"!src/exclude.impala"`.
 
-    // included projects are globally available
-    "include": [
-        "repos/anydsl/runtime/artic.json" // here: defines project 'runtime'
-    ]
-}
-```
+### Include entries
 
-## Hints
-The language server will also provide information and diagnostics for your configuration files.
+| Entry | Effect |
+| ----- | ------ |
+| `../other/artic.json` | Adds every project defined in that configuration file. |
+| `../build/my_kernel.vcxproj` | A Visual Studio project. Its source files are taken from the `artic.exe` build command. |
+| `../build/anydsl.sln` | A whole solution. Expands to the `.vcxproj` files it lists; projects that do not invoke artic are skipped silently. |
+| `../build/build.ninja` | A ninja build file. Every target whose command line invokes artic becomes a project named after the file it generates. |
+| `../build/build.ninja?` | A trailing `?` marks the include optional, which is useful for a build directory that does not exist on a fresh checkout. An optional include that exists but is broken is still reported. |
 
-Example:
+Earlier versions supported a separate global configuration file, referenced as `"<global>"`. It has
+been removed; use `include` instead.
 
+## Configuration diagnostics
 
-
-
-
+The configuration files are validated as well, and problems are reported in the same place as
+source errors.
 
 ![config diagnostics](vscode/docs/media/config.png)
 
-
-
-
-
-
 # Development
+
+[AGENTS.md](AGENTS.md) is the handover document for contributors: it records the conventions for
+the `artic/` submodule, the definition of done, and the mistakes that have already been made once.
 
 ## Repository
 
-```js
+```text
 vscode-artic
-| artic-lsp                   // Language server - fork of Artic (c++)
-| src
-| | extension.ts              // Language client (vscode)
-| syntaxes
-| | artic.tmGrammar.json      // TextMate grammar for syntax highlighting
-| language-configuration.json // Brackets and indentation rules
-|
-| build-lsp.sh                // builds artic-lsp
-| package.sh                  // builds artic-lsp and extension, packages the extension
-| publish.sh                  // builds and packages everything, publishes a new release (internal)
-|
-| LICENSE.md
-| README.md
+├── artic/                          # submodule: fork of AnyDSL/artic, provides libartic
+├── artic-lsp/                      # the language server (C++20)
+│   ├── include/                    # compile.h, config.h, server.h, workspace.h, crash.h
+│   ├── src/                        # server.cpp, compile.cpp, config.cpp, workspace.cpp, main.cpp
+│   ├── cmake/Dependencies.cmake    # fetches thorin, lsp-framework, nlohmann_json, half
+│   └── build.sh
+├── vscode/                         # the VS Code extension (TypeScript)
+│   ├── src/extension.ts            # the language client
+│   ├── src/detect.ts               # "Detect workspace configuration"
+│   ├── syntaxes/artic.tmGrammar.json
+│   ├── language-configuration.json
+│   ├── snippets/artic.json
+│   ├── build-lsp.sh, build-lsp.ps1 # stage the server binary into vscode/build/bin
+│   ├── package.sh                  # build everything and package the .vsix
+│   └── publish.sh                  # tag and publish a GitHub release
+├── test/                           # LSP protocol tests and .art fixtures
+├── AGENTS.md
+└── README.md
 ```
 
-## Build Requirements
+The compile pipeline the server drives is `Lexer -> Parser -> NameBinder -> TypeChecker -> Summoner`,
+in `Compiler::compile_files()` in [artic-lsp/src/compile.cpp](artic-lsp/src/compile.cpp).
+
+## Build requirements
 
 - CMake >= 3.20
 - A C++20 compiler
-- A CMake generator (Ninja is used by default in `build.sh`)
-- Node.js >= 20 (installed with nvm)
+- A generator; Ninja is used by the scripts
+- Node.js >= 20, for the extension and the test suite
+- A working network connection for the first configure: thorin, lsp-framework, nlohmann_json and
+  half are downloaded by CMake `FetchContent`, which makes the first build slow and later ones fast
 
 The following combinations are verified to build the language server on Windows x86_64:
 
@@ -206,42 +198,73 @@ The following combinations are verified to build the language server on Windows 
 
 ## Checkout the repository
 
-Clone the repository
 ```bash
-# clone recursively using https
 git clone https://github.com/DFOP-HD/vscode-artic.git --recursive
-# or ssh
+# or
 git clone git@github.com:DFOP-HD/vscode-artic.git --recursive
 ```
-Note: if you forgot to clone recursively, you can run this after cloning
+
+If you forgot `--recursive`:
+
 ```bash
-git submodule init
-git submodule update --recursive
+git submodule update --init --recursive
 ```
 
 ## Building
 
-Configure and build `artic-lsp` with
-
 ```bash
-cd artic-lsp && ./build.sh
+cmake -S artic-lsp -B artic-lsp/build -G Ninja -D CMAKE_BUILD_TYPE=Release
+cmake --build artic-lsp/build --parallel
 ```
 
-### Build and Package the Extension
-
-To build Artic and package the VS Code extension as a `.vsix` file:
-
-```bash
-./package.sh
-```
-
-If you also want to immediately install the extension, use:
+This produces `artic-lsp/build/bin/artic-lsp`. Also build the standalone compiler, which the
+fixture tests and the compiler's own test suite need:
 
 ```bash
-./package.sh install
+cmake --build artic-lsp/build --target artic --parallel
 ```
 
-### Build and start Extension Development Host
+Any directory matching `build*` is ignored by git, so several configurations can coexist.
 
-The easiest way to get started developing is to open the project in VSCode and press `F5`.
-This will open a new VSCode window with the extension installed.
+On Linux and macOS `artic-lsp/build.sh` wraps the two commands above. On Windows, the
+`Visual Studio 17 2022` generator is the least troublesome choice because MSBuild locates the
+Windows SDK itself; Ninja with MSVC or Clang requires a correctly set up `vcvars64` environment.
+See [AGENTS.md](AGENTS.md) for the details.
+
+## Testing
+
+```bash
+node --test 'test/*.test.mjs'                   # LSP protocol suite
+ctest --test-dir artic-lsp/build -E "^thorin_"  # the artic compiler's own suite
+```
+
+Quote the glob: `node --test test/` does not work. Run `npm install` in `vscode/` first, because
+one test bundles `vscode/src/detect.ts` with esbuild. See [test/README.md](test/README.md).
+
+## Build and package the extension
+
+On Linux and macOS:
+
+```bash
+cd vscode
+./package.sh          # add 'install' to install the resulting .vsix immediately
+```
+
+On Windows, do the same steps by hand, because `package.sh` builds a Linux binary:
+
+```powershell
+cd vscode
+./build-lsp.ps1
+npm install
+npm run compile
+npm run package
+```
+
+Do not run the `.sh` scripts through `bash.exe` from PowerShell: on most Windows machines that is
+the WSL stub, and it will silently produce Linux binaries.
+
+## Extension Development Host
+
+Open the repository in VS Code and press `F5`. This runs the `Build Extension with LSP Server`
+task, which builds the server, stages it into `vscode/build/bin/` and compiles the extension, then
+opens a second window with the extension loaded.
