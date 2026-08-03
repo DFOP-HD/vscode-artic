@@ -589,6 +589,112 @@ std::vector<Project> parse_ninja(const ConfigPath& origin, ConfigLog& log) {
     return projects;
 }
 
+namespace {
+
+// Bounds on the workspace scan. It runs on the miss path of a file with no configuration
+// above it, so it must not be able to walk an arbitrarily large tree: an AnyDSL checkout
+// with LLVM in it is hundreds of thousands of files.
+constexpr size_t max_scan_depth = 12;
+constexpr size_t max_scanned_directories = 20000;
+constexpr size_t max_build_files = 2000;
+
+// Directories that never contain a build file worth reading, plus everything hidden.
+// `build` is deliberately *not* here: it is exactly where the build files live.
+bool is_skipped_directory(const std::string& name) {
+    static const std::set<std::string_view> skipped = {
+        "node_modules", "out", "dist", "bin", "obj", "target", "__pycache__",
+    };
+    return name.starts_with(".") || skipped.contains(to_lower(name));
+}
+
+bool mentions_artic(const fs::path& file) {
+    auto content = paths::read_file(file);
+    return content && to_lower(*content).find("artic") != std::string::npos;
+}
+
+// Whether `dir` is `covered` or below it.
+bool is_within(const fs::path& covered, const fs::path& dir) {
+    auto a = paths::lookup_key(covered).generic_string();
+    auto b = paths::lookup_key(dir).generic_string();
+    return b == a || (b.starts_with(a) && b[a.size()] == '/');
+}
+
+} // anonymous namespace
+
+std::vector<fs::path> detect_build_files(const fs::path& root, ConfigLog& log) {
+    std::vector<fs::path> solutions, ninja_files, vcxprojs;
+
+    size_t directories = 0;
+    std::error_code ec;
+    fs::recursive_directory_iterator it(root, fs::directory_options::skip_permission_denied, ec);
+    if (ec) {
+        log::info("Could not scan workspace root {}: {}", root.generic_string(), ec.message());
+        return {};
+    }
+    for (fs::recursive_directory_iterator end; it != end; it.increment(ec)) {
+        if (ec) break;
+        if (it->is_directory(ec)) {
+            if (++directories > max_scanned_directories) break;
+            if (static_cast<size_t>(it.depth()) + 1 >= max_scan_depth ||
+                is_skipped_directory(it->path().filename().string()))
+                it.disable_recursion_pending();
+            continue;
+        }
+        if (solutions.size() + ninja_files.size() + vcxprojs.size() >= max_build_files) break;
+
+        auto name = to_lower(it->path().filename().string());
+        auto ext = to_lower(it->path().extension().string());
+        if (ext == ".sln") solutions.push_back(it->path());
+        else if (name == "build.ninja") ninja_files.push_back(it->path());
+        else if (ext == ".vcxproj") vcxprojs.push_back(it->path());
+    }
+
+    // Deterministic order, so which of two overlapping build files wins does not depend on
+    // the order the filesystem happened to hand them out in.
+    for (auto* files : { &solutions, &ninja_files, &vcxprojs })
+        std::sort(files->begin(), files->end());
+
+    // A .sln contains nothing but project names and GUIDs, so it never mentions artic
+    // itself; it qualifies when one of the projects it lists does.
+    std::set<fs::path> artic_projects;
+    for (const auto& vcxproj : vcxprojs)
+        if (mentions_artic(vcxproj)) artic_projects.insert(paths::lookup_key(vcxproj));
+
+    std::vector<fs::path> kept;
+    std::vector<fs::path> covered_dirs;
+    auto is_covered = [&](const fs::path& dir) {
+        return std::any_of(covered_dirs.begin(), covered_dirs.end(),
+                           [&](const fs::path& covered) { return is_within(covered, dir); });
+    };
+
+    // Strongest match first: a solution supersedes the projects it lists, and a ninja file
+    // supersedes the projects next to it. Including both would define every project twice,
+    // and the duplicate is silently dropped rather than merged.
+    for (const auto& solution : solutions) {
+        auto listed = parse_sln(ConfigPath{ .path = solution, .is_implicit = true }, log);
+        if (!std::any_of(listed.begin(), listed.end(), [&](const ConfigPath& project) {
+                return artic_projects.contains(paths::lookup_key(project.path));
+            }))
+            continue;
+        kept.push_back(solution);
+        covered_dirs.push_back(solution.parent_path());
+    }
+    for (const auto& ninja : ninja_files) {
+        if (is_covered(ninja.parent_path()) || !mentions_artic(ninja)) continue;
+        kept.push_back(ninja);
+        covered_dirs.push_back(ninja.parent_path());
+    }
+    for (const auto& vcxproj : vcxprojs) {
+        if (!artic_projects.contains(paths::lookup_key(vcxproj))) continue;
+        if (is_covered(vcxproj.parent_path())) continue;
+        kept.push_back(vcxproj);
+    }
+
+    log::info("Scanned {} directories under {} and detected {} build file(s)",
+              directories, root.generic_string(), kept.size());
+    return kept;
+}
+
 } // config
 
 } // namespace artic::ls

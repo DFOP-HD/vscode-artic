@@ -32,7 +32,7 @@ one of the utility modules, so a handler stays readable:
 | `ast_render.h` / `.cpp` | `artic::ls` | Turning AST nodes into display strings: `print_to_string`, `print_param_list`, `render_decl`, and the `symbol_kind_of` mapping. Hover, document symbols, workspace symbols, code lens and completion all render through here so they cannot disagree. |
 | `symbol_index.{h,cpp}` | `artic::ls` | The parse-only, per-project declaration index behind `workspace/symbol`. |
 | `workspace.{h,cpp}` | `artic::ls::workspace` | Config discovery, the project registry, file tracking. |
-| `config.{h,cpp}` | `artic::ls::config` | Parsing `artic.json`, `.artic-lsp`, `.vcxproj`, `.sln`, `build.ninja`, and `ConfigLog`. |
+| `config.{h,cpp}` | `artic::ls::config` | Parsing `artic.json`, `.artic-lsp`, `.vcxproj`, `.sln`, `build.ninja`, the bounded workspace scan behind zero-config projects, and `ConfigLog`. |
 | `compile.{h,cpp}` | `artic::ls` | Driving `libartic` and holding the resulting AST, `Locator` and `NameMap`. |
 
 The `artic-lsp` target is built with `-Wall` (`/W3` on MSVC). The flags are scoped to that
@@ -362,23 +362,23 @@ feature works, read that, not a changelog.
 Ordered by value. Items 1 and 2 are the two things a user actually notices; 3 and 4 are
 hygiene.
 
-### 1. Zero-config projects — *1a and 1b done, highest value*
+### 1. Zero-config projects — *1a–1c done; only the open question is left*
 
-Requiring a hand-written `artic.json` before anything works is the first thing every new user
-hits, and a file with no config is still compiled **alone**:
-`Workspace::collect_project_files` falls through to `{tracked_file(file)}`, so every
-cross-file reference becomes "unknown identifier". The status bar now says so (1b), but
-nothing yet makes it unnecessary.
+A CMake- or MSBuild-driven checkout now works with no `artic.json`, and the status bar says
+which project a file is in — see
+[Zero-config projects](docs/implementation-notes.md#zero-config-projects). What remains is the
+case with no config *and* no build file, where the fallback is still a single-file compile.
 
 **What bounds this: artic has no import mechanism.** Files are concatenated on the command
 line, there is no `#include`, and `use` only aliases a module that is already in the program.
 So a project cannot be inferred from the source the way it can in Rust or Cargo — that is
-precisely why a config exists. What *can* be recovered is the build system's own answer.
+precisely why a config exists. What *can* be recovered is the build system's own answer, and
+that is what 1c does.
 
 #### Evidence from a real checkout
 
 Measured against `D:/anydsl-metaproject` (690 `.art`/`.impala` files outside the LLVM trees).
-This is the reference for every decision below.
+**This is the reference any rule proposed for 1d must be justified against.**
 
 | Tree | Files | Shape |
 | ---- | ----: | ----- |
@@ -395,7 +395,7 @@ Two findings, both hard:
 - **A directory is not a project.** 70 of the 71 files in `artic/test/simple` compile cleanly
   on their own; compiled together they produce **141 errors**, all redefinitions (`test`,
   `foo`, `E`, …). The same holds for `impala/test/**`. That is ~550 of the 690 files, and for
-  every one of them **the current single-file fallback is already the correct answer.**
+  every one of them **the single-file fallback is already the correct answer.**
 - **A real project is combinatorial, and only the build system knows the combination.**
   `stincilla/` holds `jacobi.impala`, `gaussian.impala`, `bilateral.impala` and `matmul.impala`
   side by side with seven mutually exclusive `backend_*.impala` and two mutually exclusive
@@ -410,25 +410,9 @@ a `default-project` that just inherits the two libraries.
 
 #### The work
 
-*1a (capture the workspace root) and 1b (say which project a file is in) are done — see
-[Which project a file is in](docs/implementation-notes.md#which-project-a-file-is-in).
-`Server::workspace_roots_` exists and is logged, but nothing consumes it yet; 1c is what
-consumes it.*
+*1a (capture the workspace root), 1b (say which project a file is in) and 1c (detect build
+files server-side) are done.*
 
-- **1c — detect build files server-side, in memory.** The C++ side can already *parse* `.sln`,
-  `build.ninja` and `.vcxproj` (`parse_sln`, `parse_ninja`, `parse_vcxproj` in
-  [artic-lsp/src/config.cpp](artic-lsp/src/config.cpp)). The only reasons a user must run
-  "Detect workspace configuration" and commit the result are that the *discovery* lives in
-  TypeScript ([vscode/src/detect.ts](vscode/src/detect.ts)) and that the *persistence* is a
-  file. Move the discovery: when `find_config_recursive` reaches the workspace root without
-  finding a config, scan with the same precedence `selectWorkspaceConfigFiles` uses and
-  instantiate those configs in memory. Every CMake- or MSBuild-driven AnyDSL checkout then
-  works with no file at all, and the build system stays the single source of truth. The
-  explicit command keeps its place for anyone who wants the result pinned in the repo.
-  The scan must be bounded — skip hidden and `node_modules`-style directories, cap the depth,
-  cap the number of files — and cached, because it runs on the miss path of every file that
-  has no config above it. `FileProject::Provenance` needs a fourth value for it, so the status
-  bar can say the answer came from a build file rather than from a config the user wrote.
 - **1d — a *narrow* implicit project, only where the evidence supports one.** With no config
   and no build file, the fallback stays single-file unless a directory looks like one program.
   Any rule here must be justified against the table above before it is written, and must be
@@ -436,7 +420,7 @@ consumes it.*
   nothing. Open question; do not implement without agreeing the rule first.
 - **1e — globs from a setting.** `artic.include` / `artic.projectFiles` forwarded through
   `initializationOptions`, so a user can point the server at sources without committing
-  anything. Lowest value; only if 1c–1d leave a real gap.
+  anything. Lowest value; only if 1d leaves a real gap.
 
 ### 2. Bounded parse-error recovery — *not started*
 
@@ -481,9 +465,10 @@ one larger PR.
 handles `Created` and `Deleted` by reloading the whole workspace and ignores `Changed` entirely
 ("Handle elsewhere"), which means the editor's own didOpen/didSave. So a `git checkout` that
 rewrites a source file, or a build that regenerates `build.ninja`, leaves the server on stale
-projects until the user happens to open the file. Item 1c makes this worse, because the build
-file becomes the source of truth without ever being opened. Route `Changed` on a config or
-build file to `on_config_changed`. The create/delete path is separately worth narrowing: it
+projects until the user happens to open the file. **Item 1c raised the stakes**: a build file is
+now the source of truth for a workspace with no config, and it is never opened. Route `Changed`
+on a config or build file to `on_config_changed`. The create/delete path is separately worth
+narrowing: it
 reloads unconditionally — including the symbol index — for any watched file, and a build
 writing into the tree will thrash it.
 
@@ -603,11 +588,13 @@ Open a PR against AnyDSL/artic with the non-LSP fixes listed under
   Only the drive letter is folded — lowercasing the whole path would stop diagnostic URIs
   matching the document VS Code opened.
 - **`lsp::Uri::path()` keeps the leading slash of a Windows drive path; `lsp::FileUri::path()`
-  strips it.** A URI arriving as a *string* (a command argument, say) parses to a `Uri`, and
-  `/D:/ws/main.art` canonicalises to something no config matches — so
-  `artic.projectForFile` reported `single-file` for every file, which looks exactly like a
-  discovery bug. Wrap it: `lsp::FileUri(lsp::Uri::parse(s)).path()`. Note `path()` borrows
-  from the object, so the `FileUri` has to outlive the use.
+  strips it.** A URI arriving as a plain `Uri` — a command argument parsed with `Uri::parse`,
+  or `WorkspaceFolder::uri` and `rootUri` in `initialize` — yields `/D:/ws/main.art`, which
+  canonicalises to something no config matches. It bit twice: `artic.projectForFile` reported
+  `single-file` for every file, and the detected workspace roots matched nothing so zero-config
+  detection silently never ran. Both look exactly like discovery bugs. Wrap it:
+  `lsp::FileUri(uri).path()`. Note `path()` borrows from the object, so the `FileUri` has to
+  outlive the use.
 - `artic-lsp/src/main.cpp` ignores `argv`; the extension still passes `--lsp`, which is a no-op.
 - `libartic` exports `ENABLE_LSP` as a **PUBLIC** compile definition, so it leaks to every
   consumer of the library, including the `artic` executable.

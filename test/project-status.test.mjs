@@ -32,6 +32,14 @@ const alone = {
     fileCount: 1,
 };
 
+const detected = {
+    file: '/ws/src/main.art',
+    provenance: 'detected',
+    name: 'demo',
+    origin: '/ws/build/build.ninja',
+    fileCount: 2,
+};
+
 describe('project status presentation', () => {
     let statusBarText, statusBarTooltip, isFallback, cleanup;
 
@@ -62,8 +70,16 @@ describe('project status presentation', () => {
         const tooltip = statusBarTooltip(alone);
         assert.match(tooltip, /artic\.json/);
         assert.match(tooltip, /unknown\s+identifier/);
-        assert.match(tooltip, /Detect workspace/);
+        assert.match(tooltip, /build file/);
         assert.equal(isFallback(alone), true);
+    });
+
+    test('a detected build file says so, so it is not mistaken for a config', () => {
+        assert.match(statusBarText(detected), /demo/);
+        const tooltip = statusBarTooltip(detected);
+        assert.match(tooltip, /Detected/);
+        assert.match(tooltip, /build\/build\.ninja/);
+        assert.equal(isFallback(detected), false);
     });
 
     test('no answer yet is a fallback too, and never shows a bare project name', () => {

@@ -58,6 +58,7 @@ ctest --test-dir artic-lsp/buildGcc -E "^thorin_"
 | `circular-dependencies.test.mjs` | Cycles between projects are reported once and then broken, so the projects still compile. |
 | `project-provenance.test.mjs` | The `artic.projectForFile` command: which project a file is compiled in, and whether that came from a config, a `default-project` or the single-file fallback. |
 | `project-status.test.mjs` | How that answer is worded in the status bar. Bundles `vscode/src/project-status.ts` with esbuild. |
+| `zero-config.test.mjs` | A workspace with build files but no `artic.json`: the sources still compile together, a config the user wrote wins over a detected build file, and the scan does not descend into hidden or output directories. |
 | `detect-config.test.mjs` | Which build files the "Detect workspace configuration" command writes into `artic.json`. Bundles `vscode/src/detect.ts` with esbuild, so it needs no VS Code instance. |
 | `server-path.test.mjs` | How the extension picks the server binary: the `artic.serverPath` setting, the bundled binary, then `PATH`. Bundles `vscode/src/server-path.ts` with esbuild. |
 | `fixtures.test.mjs` | Compiles the fixtures with the real `artic` binary. |

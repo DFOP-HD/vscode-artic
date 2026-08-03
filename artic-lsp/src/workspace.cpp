@@ -33,6 +33,15 @@ void Workspace::reload() {
     configs_.clear();
     arena_ = std::make_unique<Arena>();
     project_for_file_cache_.clear();
+    detected_config_for_root_.clear();
+    detected_projects_.clear();
+}
+
+void Workspace::set_workspace_roots(std::vector<fs::path> roots) {
+    for (auto& root : roots) root = paths::canonical_path(root);
+    if (roots == workspace_roots_) return;
+    workspace_roots_ = std::move(roots);
+    reload();
 }
 
 std::vector<File*> Workspace::collect_project_files(const fs::path& file, config::ConfigLog& log) {
@@ -56,7 +65,9 @@ FileProject Workspace::project_of_file(const fs::path& file, config::ConfigLog& 
     info.name = project->name;
     info.origin = project->origin;
     if (uses_file(*project, file)) {
-        info.provenance = FileProject::Provenance::Config;
+        info.provenance = detected_projects_.contains(project)
+            ? FileProject::Provenance::DetectedBuildFile
+            : FileProject::Provenance::Config;
         info.file_count = total_file_count(*project);
     } else {
         // The default project does not list the file, so a compile adds it to the project's
@@ -85,7 +96,11 @@ Project* Workspace::discover_project_for_file(const fs::path& file, config::Conf
     auto key = paths::canonical_path(file);
     if (auto it = project_for_file_cache_.find(key); it != project_for_file_cache_.end())
         return it->second;
-    if (auto project = find_config_recursive(key.parent_path(), key, log)) {
+    auto project = find_config_recursive(key.parent_path(), key, log);
+    // Only once no configuration claims the file: a config the user wrote always wins over
+    // whatever a build file in the same tree happens to say.
+    if (!project) project = find_detected_project(key, log);
+    if (project) {
         project_for_file_cache_[key] = project;
         return project;
     }
@@ -107,6 +122,61 @@ Project* Workspace::find_config_recursive(fs::path dir, const fs::path& file, co
     } while(dir.root_path() != dir);
     log::info("- Did not find matching config for file {}", file.generic_string());
     return nullptr;
+}
+
+namespace {
+// Whether `file` is `root` or below it.
+bool is_within(const fs::path& root, const fs::path& file) {
+    auto a = paths::lookup_key(root).generic_string();
+    auto b = paths::lookup_key(file).generic_string();
+    return b == a || (b.starts_with(a) && b.size() > a.size() && b[a.size()] == '/');
+}
+} // anonymous namespace
+
+Project* Workspace::find_detected_project(const fs::path& file, config::ConfigLog& log) {
+    for (const auto& root : workspace_roots_) {
+        if (!is_within(root, file)) continue;
+        auto config = detected_config_for_root(root, log);
+        if (!config) continue;
+        if (auto project = find_project_in_config_using_file(*config, file, log)) {
+            log::info("- Found matching project '{}' in detected build file {}",
+                      project->name, project->origin.generic_string());
+            detected_projects_.insert(project);
+            return project;
+        }
+    }
+    return nullptr;
+}
+
+ConfigFile* Workspace::detected_config_for_root(const fs::path& root, config::ConfigLog& log) {
+    if (auto it = detected_config_for_root_.find(root); it != detected_config_for_root_.end())
+        return it->second;
+    // Cache the miss before scanning: this runs for every file that has no configuration
+    // above it, and a workspace with no build files must not be walked more than once.
+    detected_config_for_root_[root] = nullptr;
+
+    auto build_files = config::detect_build_files(root, log);
+    if (build_files.empty()) return nullptr;
+
+    // Named after a file that does not exist, so nothing can look it up as a real config
+    // and no diagnostic can ever be attributed to it.
+    ConfigFile cfg{ .path = root / "<detected build files>" };
+    for (auto& build_file : build_files) {
+        cfg.includes.push_back(ConfigPath{
+            .path = build_file,
+            .raw_path_string = build_file.generic_string(),
+            // Nothing here was asked for by name, so a build file that turns out not to
+            // build artic after all is not a problem the user can act on.
+            .is_optional = true,
+            .is_implicit = true,
+        });
+    }
+
+    auto path = cfg.path;
+    configs_[path] = arena_->make_ptr<ConfigFile>(std::move(cfg));
+    auto* config = configs_.at(path).get();
+    detected_config_for_root_[root] = config;
+    return config;
 }
 
 ConfigFile* Workspace::find_config_in_dir(const fs::path& dir, config::ConfigLog& log) {

@@ -348,9 +348,10 @@ export function activate(context: vscode.ExtensionContext) {
         }
         const message = statusBarTooltip(lastProject);
         if (isFallback(lastProject)) {
-            const choice = await vscode.window.showWarningMessage(
-                message, 'Detect workspace configuration');
-            if (choice) await vscode.commands.executeCommand('artic.detectWorkspaceConfiguration');
+            // Deliberately not offering "Detect workspace configuration" here: the server
+            // already scanned for build files and found none, so the command would report
+            // the same nothing.
+            vscode.window.showWarningMessage(message);
         } else {
             vscode.window.showInformationMessage(message);
         }

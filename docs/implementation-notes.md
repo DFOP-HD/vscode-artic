@@ -141,7 +141,8 @@ discovery a compile does — and returns a `FileProject` with
 | ---------- | ------- |
 | `Config` | A project lists this file. `file_count` is the project's own files plus its dependencies'. |
 | `DefaultProject` | The file is listed nowhere, but a `default-project` applies; a compile adds this file to that project, so `file_count` includes it. |
-| `SingleFile` | No configuration was found. The file is compiled on its own. |
+| `DetectedBuildFile` | No configuration was found, but a build file in the workspace lists the file — see [Zero-config projects](#zero-config-projects). |
+| `SingleFile` | Nothing claims the file. It is compiled on its own. |
 
 **It is exposed through `workspace/executeCommand`, not a request of our own.** A custom method
 would need a client that speaks it; every LSP client already speaks `executeCommand`. The command
@@ -156,14 +157,51 @@ symptom is every file reporting `single-file`.
 On the editor side, [vscode/src/extension.ts](../vscode/src/extension.ts) queries this on every
 active-editor change and after every save, and renders it in a status bar item; the wording lives
 in [vscode/src/project-status.ts](../vscode/src/project-status.ts) so it can be unit tested without
-a VS Code instance. A single-file compile gets `statusBarItem.warningBackground` and, when the item
-is clicked, offers to run **Artic: Detect workspace configuration**. Detection stays a status bar
-affordance rather than a notification: it is shown on every file, and a popup on every file is not
-a feature.
+a VS Code instance. A single-file compile gets `statusBarItem.warningBackground`. That entry is the
+whole UI: detection deliberately raises no notification, because it applies to every file and a
+popup per file is not a feature.
 
-`Initialize` also records `workspaceFolders` (falling back to the deprecated `rootUri`) in
-`Server::workspace_roots_`. Nothing consumes it yet — it is what bounds the upward search when the
-server starts looking for build files itself.
+### Zero-config projects
+
+A CMake- or MSBuild-driven checkout needs no `artic.json`. When the walk up the directory tree
+finds no configuration, `Workspace::find_detected_project()` scans the workspace roots for build
+files and treats what it finds as a configuration that was never written down.
+
+**Order matters and is not negotiable: a configuration the user wrote always wins.** Detection only
+runs after `find_config_recursive()` has returned nothing, so adding an `artic.json` can never be
+overridden by a build file sitting in the same tree.
+
+**The roots come from `initialize`.** `workspaceFolders`, falling back to the deprecated `rootUri`,
+which every client still sends. Both are plain `Uri`s, so the same `FileUri` conversion applies —
+without it every root is `/D:/...`, matches no file, and detection silently never happens. With no
+root at all (a single file opened outside a folder) there is nothing to scan and the fallback stays
+single-file, which is also why a file outside every root is never swept into a project.
+
+**`config::detect_build_files()` mirrors `selectWorkspaceConfigFiles` in
+[vscode/src/detect.ts](../vscode/src/detect.ts)**, which does the same job for the explicit
+"Detect workspace configuration" command: strongest match first, a `.sln` supersedes the projects
+it lists and a `build.ninja` supersedes the projects next to it, because including both would
+define every project twice and the duplicate is dropped rather than merged. A `.sln` never mentions
+artic itself, so it qualifies when one of the `.vcxproj` files it lists does.
+
+**The scan is bounded and cached**, because it runs on the miss path of *every* file that has no
+config above it, and an AnyDSL checkout with LLVM in it is hundreds of thousands of files. It caps
+depth, directory count and file count, skips hidden directories and the usual output directories,
+and `detected_config_for_root_` caches the **miss** as well as the hit — otherwise a workspace with
+no build files would be walked again for every file opened in it.
+
+The result is a synthetic `ConfigFile` whose includes are the detected build files, marked
+`is_implicit` so a build file that turns out not to build artic after all is not reported as a
+problem the user can act on, and named after a path that does not exist so no diagnostic can ever
+be attributed to it. The projects reached through it are recorded in `detected_projects_`, which is
+the only reason `project_of_file()` can tell `DetectedBuildFile` apart from `Config`.
+
+**What is deliberately *not* done: inferring a project from a directory.** Measured against a real
+checkout, 70 of the 71 files in `artic/test/simple` compile cleanly on their own and produce 141
+redefinition errors when compiled together; roughly 550 of the 690 `.art`/`.impala` files in that
+checkout are independent single-file programs for which the single-file fallback is already the
+correct answer. Artic has no import mechanism, so a project cannot be recovered from the source —
+only from the build system. See the plan in [AGENTS.md](../AGENTS.md#plan) for the evidence.
 
 ---
 

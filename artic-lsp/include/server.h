@@ -71,10 +71,6 @@ private:
     bool running_ = false;
     bool safe_mode_ = false;
 
-    // Folders the editor has open, from `workspaceFolders` or the deprecated `rootUri`.
-    // Empty when the editor opened a single file rather than a folder.
-    std::vector<std::filesystem::path> workspace_roots_;
-
     // Project management
     std::unique_ptr<workspace::Workspace> workspace_;
     std::optional<Compiler> compile;

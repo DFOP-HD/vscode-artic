@@ -132,20 +132,29 @@ void Server::setup_events_initialization() {
 
         // The folders the editor has open. `workspaceFolders` supersedes `rootUri`, which
         // the specification deprecated but every client still sends. Without either, the
-        // server has no idea where the project ends, which is what stops it from looking
-        // for a build file when no configuration exists.
-        workspace_roots_.clear();
+        // server has no idea where the project ends and cannot look for a build file when
+        // no configuration exists.
+        //
+        // Both are plain `Uri`s, whose `path()` keeps the leading slash of a Windows drive
+        // path; only `FileUri::path()` strips it. Without the conversion every root is
+        // `/D:/...`, which matches no file and silently disables detection.
+        std::vector<std::filesystem::path> workspace_roots;
+        auto to_path = [](const lsp::Uri& uri) {
+            lsp::FileUri file_uri(uri);
+            return absolute_path(file_uri.path());
+        };
         if (auto& folders = params.workspaceFolders; folders.has_value() && !folders->isNull()) {
             for (const auto& folder : folders->value())
-                workspace_roots_.push_back(absolute_path(folder.uri.path()));
+                workspace_roots.push_back(to_path(folder.uri));
         }
-        if (workspace_roots_.empty() && !params.rootUri.isNull())
-            workspace_roots_.push_back(absolute_path(params.rootUri->path()));
-        for (const auto& root : workspace_roots_)
+        if (workspace_roots.empty() && !params.rootUri.isNull())
+            workspace_roots.push_back(to_path(*params.rootUri));
+        for (const auto& root : workspace_roots)
             log::info("[LSP] workspace root: {}", root.generic_string());
 
         safe_mode_ = restart_from_crash;
         workspace_ = std::make_unique<workspace::Workspace>();
+        workspace_->set_workspace_roots(std::move(workspace_roots));
         
         return reqst::Initialize::Result {
             .capabilities = lsp::ServerCapabilities{
@@ -2174,6 +2183,7 @@ void Server::setup_events_other() {
         result["provenance"] = lsp::json::String(
             info.provenance == Provenance::Config ? "config"
             : info.provenance == Provenance::DefaultProject ? "default-project"
+            : info.provenance == Provenance::DetectedBuildFile ? "detected"
             : "single-file");
         result["name"] = lsp::json::String(info.name);
         result["origin"] = lsp::json::String(info.origin.empty() ? std::string() : info.origin.generic_string());

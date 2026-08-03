@@ -81,13 +81,16 @@ its own, and anything it expects from another file is reported as an unknown ide
 
 ## Workspace Configuration File
 
-Create `artic.json` in the root of your workspace. It tells the language server which files belong
-to which project and are therefore compiled together, which is what makes diagnostics and
-go-to-definition correct across file boundaries.
+**If your project is built with CMake or MSBuild, you may not need one.** When there is no
+`artic.json`, the server scans the workspace for `.sln`, `build.ninja` and `.vcxproj` files that
+invoke artic and uses the file lists they contain. The status bar says which build file it took the
+answer from. Nothing is written to disk; run **Artic: Detect workspace configuration** if you would
+rather pin the result in an `artic.json` and commit it.
 
-If your project is already built with CMake, run **Artic: Detect workspace configuration** from the
-command palette. It scans for `.sln`, `build.ninja` and `.vcxproj` files that invoke artic and adds
-them as optional includes, so the configuration stays valid before the first build.
+Otherwise, create `artic.json` in the root of your workspace. It tells the language server which
+files belong to which project and are therefore compiled together, which is what makes diagnostics
+and go-to-definition correct across file boundaries. A configuration you write always wins over a
+detected build file.
 
 ```json
 {

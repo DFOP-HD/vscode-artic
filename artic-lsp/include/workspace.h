@@ -109,6 +109,8 @@ struct FileProject {
         // A configuration's `default-project`: the file is listed nowhere, but it is
         // compiled alongside whatever that project depends on.
         DefaultProject,
+        // A build file found by scanning the workspace, with no configuration involved.
+        DetectedBuildFile,
     };
 
     Provenance provenance = Provenance::SingleFile;
@@ -127,6 +129,11 @@ public:
     {}
 
     void reload();
+
+    // Folders the editor has open. They bound the search for build files: without one,
+    // there is nothing to scan and a file with no configuration stays a single-file
+    // compile. Replacing them invalidates whatever the previous roots detected.
+    void set_workspace_roots(std::vector<fs::path> roots);
 
     // Discards the editor's in-memory buffer, so the file is read from disk again.
     // Returns whether there actually was an editor buffer to discard: content that came
@@ -182,6 +189,8 @@ private:
 
     Project* discover_project_for_file(const fs::path& file, config::ConfigLog& log);
     Project* find_config_recursive(fs::path dir, const fs::path& file, config::ConfigLog& log);
+    Project* find_detected_project(const fs::path& file, config::ConfigLog& log);
+    ConfigFile* detected_config_for_root(const fs::path& root, config::ConfigLog& log);
     ConfigFile* find_config_in_dir(const fs::path& dir, config::ConfigLog& log);
     Project* find_project_in_config_using_file(const ConfigFile& config, const fs::path& file, config::ConfigLog& log);
     bool uses_file(const Project& project, const fs::path& file) const;
@@ -191,6 +200,15 @@ private:
 
     // Non-owning: the projects themselves live in `projects_`.
     std::unordered_map<fs::path, Project*> project_for_file_cache_;
+
+    std::vector<fs::path> workspace_roots_;
+    // Synthetic config per workspace root, holding the build files the scan found. Null
+    // when the scan found nothing: the miss has to be cached too, or every file without a
+    // configuration rescans the whole tree. Owned by `configs_`.
+    std::unordered_map<fs::path, ConfigFile*> detected_config_for_root_;
+    // Projects that were reached through such a config, so their provenance can be
+    // reported as detected rather than configured.
+    std::unordered_set<const Project*> detected_projects_;
 
     std::unordered_map<Project::Identifier, Ptr<Project>> projects_;
     std::unordered_map<fs::path, Ptr<File>> files_;

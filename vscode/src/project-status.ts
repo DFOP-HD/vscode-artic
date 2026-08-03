@@ -3,7 +3,7 @@
 // Kept free of the `vscode` module so it can be unit tested: the wording is the whole point
 // of the feature, and a status bar that silently says the wrong thing is worse than none.
 
-export type Provenance = 'config' | 'default-project' | 'single-file';
+export type Provenance = 'config' | 'default-project' | 'detected' | 'single-file';
 
 export interface ProjectForFile {
     file: string;
@@ -35,6 +35,11 @@ export function statusBarTooltip(info: ProjectForFile | undefined): string {
                 `Artic project "${info.name}", ${files(info.fileCount)} compiled together.`,
                 `Declared in ${info.origin}.`,
             ].join('\n');
+        case 'detected':
+            return [
+                `Artic project "${info.name}", ${files(info.fileCount)} compiled together.`,
+                `Detected from the build file ${info.origin}; no configuration was needed.`,
+            ].join('\n');
         case 'default-project':
             return [
                 `Artic default project "${info.name}", ${files(info.fileCount)} compiled together.`,
@@ -43,10 +48,10 @@ export function statusBarTooltip(info: ProjectForFile | undefined): string {
             ].join('\n');
         case 'single-file':
             return [
-                'No artic.json or .artic-lsp was found above this file, so it is compiled on',
-                'its own. Anything it expects from another file is reported as an unknown',
-                'identifier. Add a configuration file, or run "Artic: Detect workspace',
-                'configuration" if the project is built with CMake or MSBuild.',
+                'No artic.json or .artic-lsp was found above this file, and no build file in',
+                'the workspace mentions it, so it is compiled on its own. Anything it expects',
+                'from another file is reported as an unknown identifier. Add a configuration',
+                'file listing the files that belong together.',
             ].join('\n');
     }
 }
