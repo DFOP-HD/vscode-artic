@@ -469,6 +469,14 @@ it binds. Three things it must get right:
 - **Only a positional match is labelled.** `tuple->args.size() != names.size()` bails out, because
   a function whose single parameter is a tuple receives the whole tuple as one argument and lining
   names up with elements would be a guess.
+- **A one-argument call has no element location to hang the hint on.** `parse_tuple_expr()`
+  collapses a one-element tuple into the expression it contains but overwrites that expression's
+  location with the parenthesised range, so `call->arg->loc.begin` is the `(` and not the argument.
+  Placing the hint there renders it *outside* the call — `length_squared` `v:` `(c)`, and with an
+  explicit type argument it lands between the `]` and the `(`, which is where it was reported. The
+  sole-argument branch therefore steps one column past the location it is given. The multi-argument
+  branch must not: a `TupleExpr`'s elements keep their own locations, which is why every existing
+  test passed while every single-argument call was wrong.
 
 An `ImplicitParamPtrn` yields no name — it is summoned rather than written.
 `argument_repeats_name()` suppresses the hint when the argument is a plain path or projection

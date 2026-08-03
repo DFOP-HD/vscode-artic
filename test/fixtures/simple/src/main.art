@@ -9,5 +9,6 @@ fn main() -> i32 {
     let a = Vec2 { x = 1.0, y = 2.0 };
     let b = scale(a, 2.0);
     let c = add(a, b);
-    if length_squared(c) > 0.0 { 0 } else { 1 }
+    let d = unwrap[f32](Box[f32] { item = 3.0 });
+    if length_squared(c) > d { 0 } else { 1 }
 }

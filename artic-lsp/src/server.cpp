@@ -1924,9 +1924,8 @@ void collect_parameter_hints(
     const lsp::Range& range,
     lsp::Array<lsp::InlayHint>& hints)
 {
-    auto add = [&](const ast::Expr& arg, const std::string& name) {
+    auto add = [&](const ast::Expr& arg, lsp::Position position, const std::string& name) {
         if (name.empty() || name == "_" || argument_repeats_name(arg, name)) return;
-        auto position = to_position(arg.loc.begin);
         if (!contains(range, position)) return;
         lsp::InlayHint hint;
         hint.position = position;
@@ -1955,9 +1954,14 @@ void collect_parameter_hints(
             // argument; only a positional match can be labelled.
             if (tuple->args.size() != names.size()) return true;
             for (size_t i = 0; i < tuple->args.size(); ++i)
-                if (tuple->args[i]) add(*tuple->args[i], names[i]);
+                if (tuple->args[i]) add(*tuple->args[i], to_position(tuple->args[i]->loc.begin), names[i]);
         } else if (names.size() == 1) {
-            add(*call->arg, names.front());
+            // `parse_tuple_expr` collapses a one-element tuple but keeps the parentheses in
+            // its location, so the sole argument's location starts at `(` rather than at the
+            // argument. The hint belongs one column further in.
+            auto position = to_position(call->arg->loc.begin);
+            position.character += 1;
+            add(*call->arg, position, names.front());
         }
         return true;
     });

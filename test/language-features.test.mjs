@@ -118,6 +118,25 @@ describe('language features', () => {
             ['v:', 'factor:']);
     });
 
+    test('inlayHint puts a sole argument label inside the parentheses', async () => {
+        // A one-element argument list keeps the parentheses in its location, so the label
+        // used to land on the '(' itself - `length_squared|v:|(c)` rather than
+        // `length_squared(|v:|c)`. The generic call is the shape it was reported on: the
+        // label appeared between the ']' and the '('.
+        const hints = (await inlayHints()).filter((h) => h.kind === PARAMETER_HINT);
+
+        for (const [call, label] of [['length_squared(c)', 'v:'], ['unwrap[f32](', 'box:']]) {
+            const at = locate(mainText, call);
+            const line = mainText.split('\n')[at.line];
+            const paren = line.indexOf('(', at.character);
+            const found = hints.filter((h) => h.position.line === at.line && h.label === label);
+            assert.equal(found.length, 1, `expected one ${label} hint on \`${call}\`, got ${found.length}`);
+            assert.equal(found[0].position.character, paren + 1,
+                `\`${label}\` belongs at column ${paren + 1}, just after the '(' at ` +
+                `${paren}, not at ${found[0].position.character}: ${line}`);
+        }
+    });
+
     test('inlayHint honours the requested range', async () => {
         const dot = locate(mainText, 'dot(v, v)');
         const hints = await client.request('textDocument/inlayHint', {

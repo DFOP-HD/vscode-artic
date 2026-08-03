@@ -17,3 +17,11 @@ fn scale(v: Vec2, factor: f32) -> Vec2 {
 fn dot(a: Vec2, b: Vec2) -> f32 {
     a.x * b.x + a.y * b.y
 }
+
+struct Box[T] {
+    item: T
+}
+
+fn unwrap[T](box: Box[T]) -> T {
+    box.item
+}
