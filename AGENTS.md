@@ -407,9 +407,21 @@ Ordered. Keep status markers current.
    Whether Cursor can reach the Microsoft Marketplace at all is answered by its
    `product.json` `extensionsGallery.serviceUrl`; it points at Open VSX, so a listing would
    require an Eclipse account and a signed Publisher Agreement.
-7. **Restore Linux support** — development has moved to Windows and Linux has regressed.
-   Re-verify the build (`artic-lsp/build.sh`), the packaging scripts (`vscode/build-lsp.sh`,
-   `vscode/package.sh`), path handling, and run the test suite there.
+7. **Restore Linux support** — *done as far as it can be verified without a Linux machine.*
+   The build, the artic CTest suite, `npm audit`, the extension compile and the whole LSP
+   protocol suite have run on `ubuntu-latest` in
+   [.github/workflows/ci.yml](.github/workflows/ci.yml) since the CI leg was added, so the
+   server and the path handling are guarded there. What was *not* covered was the packaging
+   path, and that is where the regression actually was:
+   [artic-lsp/build.sh](artic-lsp/build.sh) had **no `set -e`**, so a failed CMake exited 0
+   and `vscode/build-lsp.sh` happily copied a stale binary into the extension — the failure
+   mode is a VSIX that ships the previous build with no error anywhere. It also `cd $(pwd)`'d
+   (a no-op that left it dependent on the caller's working directory) and carried a broken
+   duplicate command after its `exit`. Fixed, and CI's Linux leg now runs
+   `vscode/build-lsp.sh` and asserts the staged binary is executable. That step is cheap
+   because it reuses the `artic-lsp/build` tree the leg has already configured.
+   **This machine has WSL2 enabled but no distribution installed, so none of it was run on a
+   real Linux box** — do not claim otherwise; CI is the evidence.
 
 ### Language features
 

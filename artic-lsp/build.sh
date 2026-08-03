@@ -1,15 +1,13 @@
 #!/bin/bash
+# Configures and builds the language server (and the standalone `artic` compiler) with
+# Ninja. Usage: ./build.sh [Debug|Release]
+set -e
+
 BUILD_TYPE=${1:-Debug}
 
-cd $(pwd)
+# Resolve relative to this script rather than the caller's working directory: package.sh
+# and build-lsp.sh both invoke it from elsewhere.
+cd "$(cd "$(dirname "$0")" && pwd)"
 
-cmake -S . \
-    -D CMAKE_BUILD_TYPE=$BUILD_TYPE \
-    -G Ninja \
-    -B build && \
+cmake -S . -B build -G Ninja -D CMAKE_BUILD_TYPE="$BUILD_TYPE"
 cmake --build build --parallel
-
-exit
-
-
-cmake -S . -D CMAKE_BUILD_TYPE=$BUILD_TYPE-G Ninja -B build && cmake --build build --parallel

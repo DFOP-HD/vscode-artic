@@ -82,6 +82,15 @@ jobs:
         shell: bash
         run: node --test test/*.test.mjs
 
+      # The packaging scripts are Linux-only and are the part of the build that no other
+      # step exercises. They reuse `artic-lsp/build`, which is already configured and up to
+      # date at this point, so the rebuild is incremental and only the staging is new.
+      - name: Stage the server the way the packaging scripts do
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          ./vscode/build-lsp.sh
+          test -x vscode/build/bin/artic-lsp
+
       # The standalone compiler has to keep building without ENABLE_LSP. It reuses the
       # dependencies the main build already fetched, so this is cheap.
       - name: Build artic without ENABLE_LSP
