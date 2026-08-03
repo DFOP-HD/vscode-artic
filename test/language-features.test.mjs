@@ -10,6 +10,10 @@ import assert from 'node:assert/strict';
 import { LspClient, normalizeUri } from './lsp-client.mjs';
 import { findServerBinary, stageFixture, locate } from './helpers.mjs';
 
+// LSP InlayHintKind
+const TYPE_HINT = 1;
+const PARAMETER_HINT = 2;
+
 describe('language features', () => {
     let ws;
     let client;
@@ -17,6 +21,14 @@ describe('language features', () => {
     let mainText;
     let geometryUri;
     let geometryText;
+
+    const inlayHints = () => client.request('textDocument/inlayHint', {
+        textDocument: { uri: mainUri },
+        range: {
+            start: { line: 0, character: 0 },
+            end: { line: mainText.split('\n').length, character: 0 },
+        },
+    });
 
     before(async () => {
         ws = stageFixture('simple');
@@ -63,20 +75,61 @@ describe('language features', () => {
     });
 
     test('inlayHint returns type hints for inferred bindings', async () => {
+        const hints = await inlayHints();
+        assert.ok(Array.isArray(hints), `expected an array of hints, got ${JSON.stringify(hints)}`);
+        const typeHints = hints.filter((h) => h.kind === TYPE_HINT);
+        assert.ok(typeHints.length > 0, 'the `let` bindings in main.art must produce type hints');
+        for (const hint of typeHints) {
+            assert.ok(hint.label.startsWith(': '), `unexpected hint label: ${hint.label}`);
+        }
+        assert.ok(typeHints.some((h) => h.label.includes('Vec2')),
+            `at least one hint must name Vec2, got ${JSON.stringify(typeHints.map((h) => h.label))}`);
+    });
+
+    test('inlayHint labels call arguments with the parameter they bind', async () => {
+        const hints = (await inlayHints()).filter((h) => h.kind === PARAMETER_HINT);
+        assert.ok(hints.length > 0, 'the calls in main.art must produce parameter hints');
+        for (const hint of hints) {
+            assert.ok(hint.label.endsWith(':'), `unexpected hint label: ${hint.label}`);
+            assert.equal(hint.paddingRight, true, 'a parameter name needs a space after it');
+        }
+
+        // `dot(v, v)` is declared `fn dot(a: Vec2, b: Vec2)`.
+        const dot = locate(mainText, 'dot(v, v)');
+        const labelled = hints
+            .filter((h) => h.position.line === dot.line)
+            .sort((x, y) => x.position.character - y.position.character)
+            .map((h) => h.label);
+        assert.deepEqual(labelled, ['a:', 'b:']);
+    });
+
+    test('inlayHint does not repeat a name the argument already spells out', async () => {
+        const hints = (await inlayHints()).filter((h) => h.kind === PARAMETER_HINT);
+        // `add(a, b)` is declared `fn add(a: Vec2, b: Vec2)`, so both hints would be noise.
+        const add = locate(mainText, 'add(a, b)');
+        assert.deepEqual(hints.filter((h) => h.position.line === add.line), []);
+
+        // `scale(a, 2.0)` is declared `fn scale(v: Vec2, factor: f32)` - neither matches.
+        const scale = locate(mainText, 'scale(a, 2.0)');
+        assert.deepEqual(
+            hints.filter((h) => h.position.line === scale.line)
+                .sort((x, y) => x.position.character - y.position.character)
+                .map((h) => h.label),
+            ['v:', 'factor:']);
+    });
+
+    test('inlayHint honours the requested range', async () => {
+        const dot = locate(mainText, 'dot(v, v)');
         const hints = await client.request('textDocument/inlayHint', {
             textDocument: { uri: mainUri },
             range: {
-                start: { line: 0, character: 0 },
-                end: { line: mainText.split('\n').length, character: 0 },
+                start: { line: dot.line, character: 0 },
+                end: { line: dot.line + 1, character: 0 },
             },
         });
-        assert.ok(Array.isArray(hints), `expected an array of hints, got ${JSON.stringify(hints)}`);
-        assert.ok(hints.length > 0, 'the `let` bindings in main.art must produce type hints');
-        for (const hint of hints) {
-            assert.ok(hint.label.startsWith(': '), `unexpected hint label: ${hint.label}`);
-        }
-        assert.ok(hints.some((h) => h.label.includes('Vec2')),
-            `at least one hint must name Vec2, got ${JSON.stringify(hints.map((h) => h.label))}`);
+        assert.ok(hints.length > 0);
+        assert.ok(hints.every((h) => h.position.line === dot.line),
+            `hints outside the range: ${JSON.stringify(hints.map((h) => h.position))}`);
     });
 
     test('definition jumps from a call in main.art to the declaration in geometry.art', async () => {

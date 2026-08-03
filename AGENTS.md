@@ -522,16 +522,31 @@ is the reference for what else a server can advertise.
     deciding how to index without keeping every project compiled is the actual work here.
     **Code lens** (reference counts above declarations) is cheap once that index exists, so
     schedule the two together.
-17. **Parameter-name inlay hints** at call sites, from the callee's `FnType` parameter names.
-    The existing hint handler only covers declaration types.
+17. **Parameter-name inlay hints** — *done*. `collect_parameter_hints()` in
+    [artic-lsp/src/server.cpp](artic-lsp/src/server.cpp) walks the program with a `TraverseFn`
+    that prunes anything outside the requested document, resolves every `CallExpr`'s callee
+    through `name_map.find_ref_at` + `find_decl`, and labels each argument with the parameter
+    it binds. Three things it must get right:
+    **the names come from the declaration's `Ptrn`, not from the `FnType`** — a `FnType` in
+    artic is a tuple type and carries no parameter names at all; and `fn dot(a: Vec2, b: Vec2)`
+    parses as a `TuplePtrn` of **`TypedPtrn`s**, each wrapping the `IdPtrn` that holds the
+    name, so `parameter_name()` has to unwrap `TypedPtrn` recursively. Reading `IdPtrn`
+    directly yields an empty name for every annotated parameter, i.e. for every parameter
+    anyone writes — the feature silently produces nothing.
+    **An `ImplicitParamPtrn` yields no name**: it is summoned rather than written, so it can
+    never be labelled.
+    **Only a positional match is labelled.** `tuple->args.size() != names.size()` bails out,
+    because a function whose single parameter is a tuple receives the whole tuple as one
+    argument and lining names up with elements would be a guess.
+    `argument_repeats_name()` suppresses the hint when the argument is a plain path or
+    projection spelling the parameter's own name — `add(a, b)` gets no hints, which is what
+    every other language server does. Guarded by
+    [test/language-features.test.mjs](test/language-features.test.mjs).
 18. **Completion polish** — no resolve handler, no documentation, no `use`-path completion,
     and the loop-variable bug marked `TODO` in
     [artic-lsp/src/server.cpp](artic-lsp/src/server.cpp) (a `for a in ...` binding is offered
     outside the loop). Real documentation depends on item 19.
-19. **Doc comments** — the lexer discards `///`, so nothing can surface documentation in
-    hover or completion. Capturing them is a fork change under the `ENABLE_LSP` policy, and
-    it must not alter tokenisation for the standalone compiler.
-20. **Project overview in the config file** — the config parser used to annotate `artic.json`
+19. **Project overview in the config file** — the config parser used to annotate `artic.json`
     with per-project information: which config declared each project, its own file count
     versus the count inherited from dependencies, and the resolved file list. Most of it was
     commented out because it rendered as noise in the Problems panel; the one piece still
@@ -544,6 +559,9 @@ is the reference for what else a server can advertise.
 
 ### Deferred
 
+- **Doc comments** — the lexer discards `///`, so nothing can surface documentation in
+    hover or completion. Capturing them is a fork change under the `ENABLE_LSP` policy, and
+    it must not alter tokenisation for the standalone compiler.
 - **Performance and protocol modernisation** — text sync is `Full` (the whole buffer on every
   keystroke), every change recompiles the entire project and rebuilds the `NameMap` from
   scratch, diagnostics are push-only, and there is no `$/progress` during a compile.

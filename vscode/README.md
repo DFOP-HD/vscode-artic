@@ -23,7 +23,7 @@ non-technical problems.
 - Rename
 - Code completion for the symbols in scope
 - Signature help while typing a call
-- Inlay hints for inferred types
+- Inlay hints for inferred types and for the parameters a call's arguments bind
 - Semantic highlighting on top of the TextMate grammar
 - Snippets for loops, function declarations and other common constructs
 - Diagnostics for the `artic.json` configuration file itself

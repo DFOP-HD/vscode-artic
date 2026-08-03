@@ -1659,7 +1659,7 @@ void Server::reload_workspace() {
 // -----------------------------------------------------------------------------
 //
 //
-// Other
+// Selection Range
 //
 //
 // -----------------------------------------------------------------------------
@@ -1741,6 +1741,107 @@ void Server::setup_events_selection_range() {
 //
 //
 // -----------------------------------------------------------------------------
+// -----------------------------------------------------------------------------
+// Inlay Hint Helper Functions
+namespace {
+
+/// The name a parameter pattern binds, or empty when it binds none the caller can address.
+std::string parameter_name(const ast::Ptrn& ptrn) {
+    // `a: Vec2` parses as a TypedPtrn wrapping the IdPtrn that carries the name.
+    if (auto typed = ptrn.isa<ast::TypedPtrn>())
+        return typed->ptrn ? parameter_name(*typed->ptrn) : std::string();
+    // An implicit parameter is summoned, never written at the call site.
+    if (ptrn.isa<ast::ImplicitParamPtrn>()) return {};
+    auto id_ptrn = ptrn.isa<ast::IdPtrn>();
+    return id_ptrn && id_ptrn->decl ? id_ptrn->decl->id.name : std::string();
+}
+
+/// Parameter names of a callee, in declaration order. A parameter that is not a plain
+/// identifier yields an empty name, so its position can be skipped.
+std::vector<std::string> parameter_names(const ast::NamedDecl& decl) {
+    auto fn_decl = decl.isa<ast::FnDecl>();
+    if (!fn_decl || !fn_decl->fn || !fn_decl->fn->param) return {};
+
+    const auto& param = *fn_decl->fn->param;
+    if (auto tuple = param.isa<ast::TuplePtrn>()) {
+        std::vector<std::string> names;
+        names.reserve(tuple->args.size());
+        for (const auto& arg : tuple->args) names.push_back(arg ? parameter_name(*arg) : std::string());
+        return names;
+    }
+    return { parameter_name(param) };
+}
+
+/// Whether labelling this argument would only repeat what the source already says.
+bool argument_repeats_name(const ast::Expr& arg, const std::string& name) {
+    auto path_expr = arg.isa<ast::PathExpr>();
+    if (path_expr && path_expr->path.elems.size() == 1)
+        return path_expr->path.elems.front().id.name == name;
+    if (auto proj = arg.isa<ast::ProjExpr>(); proj && std::holds_alternative<ast::Identifier>(proj->field))
+        return std::get<ast::Identifier>(proj->field).name == name;
+    return false;
+}
+
+/// The declaration a call's callee names, or null when the callee is not a plain path.
+const ast::NamedDecl* callee_decl(const ast::CallExpr& call, const ls::NameMap& name_map) {
+    if (!call.callee) return nullptr;
+    auto path_expr = call.callee->isa<ast::PathExpr>();
+    if (!path_expr || path_expr->path.elems.empty()) return nullptr;
+    // The last element is the callee itself; the earlier ones are the modules it sits in.
+    auto ref = name_map.find_ref_at(path_expr->path.elems.back().id.loc);
+    return ref ? name_map.find_decl(*ref) : nullptr;
+}
+
+void collect_parameter_hints(
+    const ast::ModDecl& program,
+    const ls::NameMap& name_map,
+    const std::string& file,
+    const lsp::Range& range,
+    lsp::Array<lsp::InlayHint>& hints)
+{
+    auto add = [&](const ast::Expr& arg, const std::string& name) {
+        if (name.empty() || name == "_" || argument_repeats_name(arg, name)) return;
+        auto position = to_position(arg.loc.begin);
+        if (!contains(range, position)) return;
+        lsp::InlayHint hint;
+        hint.position = position;
+        hint.label = name + ":";
+        hint.kind = lsp::InlayHintKindEnum(lsp::InlayHintKind::Parameter);
+        hint.paddingLeft = false;
+        hint.paddingRight = true;
+        hints.push_back(std::move(hint));
+    };
+
+    ast::Node::TraverseFn visit([&](const ast::Node& node) {
+        // `program` is every file of the project concatenated, so anything belonging to
+        // another document is pruned rather than walked.
+        if (!node.loc.file || *node.loc.file != file) return false;
+
+        auto call = node.isa<ast::CallExpr>();
+        if (!call || !call->arg) return true;
+
+        auto decl = callee_decl(*call, name_map);
+        if (!decl) return true;
+        auto names = parameter_names(*decl);
+        if (names.empty()) return true;
+
+        if (auto tuple = call->arg->isa<ast::TupleExpr>()) {
+            // A function whose single parameter is a tuple takes the whole tuple as one
+            // argument; only a positional match can be labelled.
+            if (tuple->args.size() != names.size()) return true;
+            for (size_t i = 0; i < tuple->args.size(); ++i)
+                if (tuple->args[i]) add(*tuple->args[i], names[i]);
+        } else if (names.size() == 1) {
+            add(*call->arg, names.front());
+        }
+        return true;
+    });
+
+    for (const auto& decl : program.decls) if (decl) decl->traverse(visit);
+}
+
+} // anonymous namespace
+
 void Server::setup_events_other() {
 
     message_handler_.add<reqst::TextDocument_InlayHint>([this](reqst::TextDocument_InlayHint::Params&& params) -> reqst::TextDocument_InlayHint::Result {
@@ -1780,6 +1881,9 @@ void Server::setup_events_other() {
             
             hints.push_back(lsp_hint);
         }
+
+        if (compile->program)
+            collect_parameter_hints(*compile->program, compile->name_map, file.generic_string(), params.range, hints);
 
         log::info("[LSP] >>> Returning {} inlay hints", hints.size());
         return hints;
