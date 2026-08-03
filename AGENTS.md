@@ -13,6 +13,7 @@ A VS Code language server for AnyDSL's Artic/Impala language.
 | `artic-lsp/` | The language server (C++20). Links `libartic` + `lsp-framework`. |
 | `vscode/` | The VS Code extension (TypeScript) that launches the server over stdio. |
 | `test/` | Automated tests (see [Testing](#testing)). |
+| `docs/` | [Implementation notes](docs/implementation-notes.md) — how each feature works and what it has to get right. Feature-level detail belongs there, not here. |
 
 Compile pipeline used by the server: `Lexer -> Parser -> NameBinder -> TypeChecker -> Summoner`,
 driven by `Compiler::compile_files()` in [artic-lsp/src/compile.cpp](artic-lsp/src/compile.cpp).
@@ -100,6 +101,10 @@ Staging the server is done by [vscode/build-lsp.sh](vscode/build-lsp.sh) on Linu
 `artic-lsp/build*` tree rather than configuring a new one. Do not let the tasks run the `.sh`
 on Windows — `bash.exe` there is usually the WSL stub, which silently builds Linux binaries.
 
+**The shell scripts must keep `set -e`.** [artic-lsp/build.sh](artic-lsp/build.sh) once did not,
+so a failed CMake exited 0 and `vscode/build-lsp.sh` copied a *stale* binary into the extension:
+a VSIX that ships the previous build with no error anywhere.
+
 ## Testing
 
 See [test/README.md](test/README.md) for details.
@@ -138,10 +143,13 @@ far below a `didChange` round trip measured in the same run. On this machine an 
 recompiling — the double-compile bug in the file-identity gotcha below was invisible to
 every correctness test.
 
+**This machine has WSL2 enabled but no distribution installed.** Nothing can be verified on
+real Linux locally; the Linux leg of CI is the only evidence, so do not claim otherwise.
+
 **All `.art` / `.impala` fixture code must be written by us** — never copied from other
-AnyDSL repos (licensing). Sample projects such as `D:/anydsl-metaproject/stincilla` may be
-read for reference only. Every fixture that is supposed to be valid must be proven valid
-with the real compiler before being relied on in a test:
+AnyDSL repos (licensing). Sample projects such as `D:/anydsl-metaproject` may be read for
+reference only. Every fixture that is supposed to be valid must be proven valid with the real
+compiler before being relied on in a test:
 
 ```powershell
 artic-lsp/buildGcc/bin/artic.exe test/fixtures/<project>/*.art
@@ -173,11 +181,21 @@ the editor is Windows.
   `vscode/build/bin/` behind. `vscode/publish.sh` no longer builds anything: it bumps the
   version, tags and pushes, and [.github/workflows/release.yml](.github/workflows/release.yml)
   does the rest.
+- **Cursor is a supported target and must stay one.** `engines.vscode: ^1.75.0` is satisfied by
+  every current Cursor, and the extension uses no proprietary or proposed API (only `workspace`,
+  `window`, `commands`, `Uri`, `RelativePattern`, `FileSystemError`). Do not raise the engine
+  floor without a reason that survives that constraint. The owner declined publishing to the
+  Visual Studio Marketplace and to Open VSX, so the documented install route is
+  `cursor --install-extension artic-language-server-<version>.vsix`; Cursor's `product.json`
+  points `extensionsGallery` at Open VSX, so a listing there would need an Eclipse account and a
+  signed Publisher Agreement.
 - [.github/workflows/ci.yml](.github/workflows/ci.yml) runs the whole Definition of Done on
   push and PR: build + `ctest` + `node --test` + `npm audit` on Linux (Ninja/GCC) *and*
   Windows (whichever Visual Studio the runner image has), plus the no-`ENABLE_LSP` build on
-  Linux. The two toolchains are the point — the `u8string()` and drive-letter bugs below
-  were both single-toolchain bugs that a one-OS CI would have missed.
+  Linux. The Linux leg also runs `vscode/build-lsp.sh` and asserts the staged binary is
+  executable — that packaging path is the one thing CI covers that nothing else does. The two
+  toolchains are the point: the `u8string()` and drive-letter bugs below were both
+  single-toolchain bugs that a one-OS CI would have missed.
 - **Do not pin a Visual Studio generator in CI.** `-G "Visual Studio 17 2022"` failed with
   `could not find any instance of Visual Studio` once the `windows-latest` image moved past
   VS 2022. The Windows leg passes no `-G` at all, so CMake selects the newest Visual Studio
@@ -210,7 +228,8 @@ the editor is Windows.
 git -C artic diff --stat upstream/master...HEAD
 ```
 
-  (`upstream` = `https://github.com/AnyDSL/artic.git`; add it if missing.)
+  (`upstream` = `https://github.com/AnyDSL/artic.git`; add it if missing.) It has been through
+  one deliberate reduction pass already — do not let it drift back.
 - **When a fork change is acceptable at all:** an LSP-only addition is fine behind
   `ENABLE_LSP` as long as it does not change actual compiler behaviour. If it cannot be
   guarded without becoming too intrusive or too unreadable — and dropping the guard would be
@@ -285,7 +304,7 @@ ctest --test-dir artic-lsp/build-nolsp -E "^thorin_"
 A larger change is not done until all of these hold. State explicitly which ones you
 verified, and say so if you deliberately skipped one.
 
-1. **Scoped** — the task is written in the [Backlog](#backlog) with an owner-visible outcome
+1. **Scoped** — the task is written in the [Plan](#plan) with an owner-visible outcome
    before implementation starts.
 2. **Builds** — clean build on the fast loop *and* at least one other toolchain from the
    verified matrix. No new compiler warnings.
@@ -300,7 +319,8 @@ verified, and say so if you deliberately skipped one.
 7. **Dependencies audited** — `npm audit` in `vscode/` reports **0 vulnerabilities**. Never
    accept a finding silently: fix it, or record the justification here. See
    [Dependency security](#dependency-security) before reaching for `npm audit fix --force`.
-8. **Docs updated** — user-facing behaviour in [README.md](README.md), agent-facing facts here.
+8. **Docs updated** — user-facing behaviour in [README.md](README.md), how a feature works in
+   [docs/implementation-notes.md](docs/implementation-notes.md), and how to work on the repo here.
 9. **Tree clean** — `git status` shows only intended files; no build output, no scratch dirs.
 
 ## Dependency security
@@ -310,8 +330,8 @@ before applying:
 
 - **`npm audit fix --force` is not a solution on its own.** For the `brace-expansion` DoS
   advisory it wanted `vscode-languageclient@8 -> 10`, which raises `engines.vscode` from
-  `^1.75.0` to `^1.91.0`. That is a user-visible platform bump and works against
-  backlog item 5 (Cursor support). Prefer a scoped `overrides` entry.
+  `^1.75.0` to `^1.91.0`. That is a user-visible platform bump, and the engine floor is what keeps
+  the extension installable in Cursor. Prefer a scoped `overrides` entry.
 - **Prove the override at the API level, not just via the audit output.** A blanket
   `"overrides": { "brace-expansion": "^5.0.9" }` silences the audit but *breaks the extension
   at runtime*: `brace-expansion@5` exports `{ expand }` where v1/v2 exported a bare function,
@@ -333,465 +353,172 @@ before applying:
   `node --test 'test/*.test.mjs'`. `@vscode/vsce` is dev-only (it just builds the VSIX), but
   it was the source of 8 of the original 11 findings — keep it current.
 
-## Backlog
+## Plan
 
-Items 1–19 are done. They are kept because they record *why* things are the way they are;
-the forward plan is [Next up](#next-up). Keep status markers current.
+Only what is **not** done is tracked here. Everything already shipped is described in
+[docs/implementation-notes.md](docs/implementation-notes.md); if you want to know how a
+feature works, read that, not a changelog.
 
-1. **Test harness** — *done*. Dependency-free LSP protocol tests + self-authored fixtures
-   in `test/`, plus the artic CTest suite wired up via `include(CTest)`.
-2. **Config diagnostics are unreliable** — *done, with one follow-up*. Fixed:
-   - Diagnostic URIs were built with `FileUri::fromPath()`, which renders the path with
-     `u8string()` instead of `generic_u8string()`. On **MSVC** that keeps native backslashes,
-     which get percent-encoded as `%5C`, so **no diagnostic ever reached the editor**.
-     MinGW's libstdc++ keeps forward slashes, which is why the fast loop never showed it.
-     Worked around with `to_file_uri()` in [artic-lsp/src/server.cpp](artic-lsp/src/server.cpp);
-     the real bug is upstream in lsp-framework and is worth reporting.
-   - Source diagnostics were published under a lowercased path (`tracked_file()` used the
-     lowercased string as the file's identity).
-   - `.artic-lsp` was never recognised: it is a dotfile, so `path::extension()` is empty and
-     both `get_file_type()` and `instantiate_config()` fell through. Matched on filename now.
-   - Diagnostics were never cleared once a config was fixed; `published_config_diagnostics_`
-     now tracks what was sent and clears it.
-   - `ConfigLog::file_context` was a single mutable field that recursive includes overwrote
-     without restoring. Replaced with the RAII `ConfigLog::scoped_file()`.
-   - `ConfigLog::error("...{}", x)` does not format — the `{}` reached the user and `x` was
-     silently treated as the search context.
-   - Removed the dead `propagate_to_file` branch in `publish_config_diagnostics()`.
+Ordered by value. Items 1 and 2 are the two things a user actually notices; 3 and 4 are
+hygiene.
 
-   Follow-up: a valid project config always emits an Information-severity message like
-   `+ 1 files | total matches: 1 files:` against its `files` pattern. Folded into item 20.
-3. **Support `.sln` files in the config** — *done*. `"include": ["../build/x.sln"]` expands to
-   the `.vcxproj` files the solution lists. Solution folders (which reuse the `Project(...)`
-   syntax) are skipped, and so is any project without an `artic.exe` build command — a
-   CMake-generated solution is mostly `ZERO_CHECK`/`ALL_BUILD` noise, so those must not
-   produce diagnostics. That distinction is `ConfigPath::is_implicit`: an include the user
-   wrote is reported on, one derived from a solution is not. Projects are instantiated
-   lazily and the result is cached even when empty, so a solution with hundreds of entries
-   parses each `.vcxproj` at most once. See `parse_sln()` in
-   [artic-lsp/src/config.cpp](artic-lsp/src/config.cpp) and `instantiate_config_sln()` in
-   [artic-lsp/src/workspace.cpp](artic-lsp/src/workspace.cpp); guarded by
-   [test/sln-config.test.mjs](test/sln-config.test.mjs).
-4. **Support `build.ninja` and detect the configuration automatically** — *done*.
-   `parse_ninja()` in [artic-lsp/src/config.cpp](artic-lsp/src/config.cpp) turns every ninja
-   target whose `COMMAND =` line invokes artic into a project named after the generated file.
-   The command is split on ` && ` so the `cd /D <dir>` of CMake's `cmd.exe /C "..."` wrapper
-   becomes the base directory for relative source paths; the first artic invocation wins, and
-   arguments are taken until the first one starting with `-`. Paths containing spaces are not
-   supported, exactly as in `.vcxproj` files.
-   The extension command is now `artic.detectWorkspaceConfiguration` ("Detect workspace
-   configuration"). It scans for `.sln`, then `build.ninja`, then `.vcxproj`, and skips
-   anything under a directory already covered by a stronger match — otherwise a solution and
-   the projects it lists both get included and every project is reported as a duplicate.
-   **A `.sln` never contains the word "artic"** — it holds nothing but project names and
-   GUIDs — so it cannot be filtered by content like a `.vcxproj` or a `build.ninja` can. It
-   qualifies when one of the projects it references does. Getting this wrong made stincilla
-   detect all 57 of its `.vcxproj` files and miss `STINCILLA.sln`. The selection logic lives
-   in [vscode/src/detect.ts](vscode/src/detect.ts) so it can be tested without VS Code.
-   Detected entries are written as **optional** includes (trailing `?`) because a build
-   directory does not exist on a fresh checkout.
-   Guarded by [test/ninja-config.test.mjs](test/ninja-config.test.mjs),
-   [test/optional-includes.test.mjs](test/optional-includes.test.mjs) and
-   [test/detect-config.test.mjs](test/detect-config.test.mjs).
-5. **Clean up the artic fork** — *done*. Divergence from the merge base went from
-   **+645 / −89 across 19 files** to **+332 / −65 across 16 files** plus three fully
-   self-guarded new files. What was done:
-   - Deleted fork noise: `.gitmodules` (referenced a `lsp-framework` submodule that does not
-     exist) and `build.sh` (hardcoded `$HOME/repos/...`).
-   - Reverted pure churn: `include/artic/parser.h`, the `main.cpp` usage-text rewrite,
-     whitespace-only edits in `bind.cpp` and `ast.h`, and debug leftovers (`// fn->dump();`).
-   - Extracted the LSP types into `include/artic/lsp.h`, `include/artic/name_map.h` and
-     `src/name_map.cpp`, all guarded in their entirety. `include/artic/print.h` is back to
-     upstream and `src/print.cpp` is down from +99 lines to four.
-   - Guarded the remaining LSP-only code in `bind.h`, `check.h`, `log.h`, `bind.cpp` and
-     `check.cpp`. See [Working with the artic/ submodule](#working-with-the-artic-submodule)
-     for the conventions and the one documented exception (`ast.h`).
-   - Removed dead code: the `Node::print_node()` declaration (never defined, never called),
-     an unused `const artic::Type* t` in `LetDecl::infer`, and restored upstream's
-     `ModDecl::members` that the fork had deleted.
-   - Fixed two real regressions the fork had introduced: the `pop_scope` gotcha below, and
-     `ContinueExpr::infer` reporting `"break expression"` (copy-paste from `BreakExpr`).
-   The upstreamable set is listed under the submodule section; PR'ing it to AnyDSL/artic is
-   still open.
-6. **Cursor editor support** — *done, except for a marketplace listing*. The blocker was never
-   an API one: `engines.vscode: ^1.75.0` is satisfied by every current Cursor, and the
-   extension uses no proprietary or proposed API (only `workspace`, `window`, `commands`,
-   `Uri`, `RelativePattern`, `FileSystemError`). **The real bug was that the published VSIX
-   contained a Linux ELF binary only, and the PATH fallback shelled out to `which` — so on
-   Windows the extension has never worked, in Cursor *or* VS Code.** Fixed by
-   [vscode/src/server-path.ts](vscode/src/server-path.ts) plus the cross-platform release
-   build; see [Packaging and CI](#packaging-and-ci). The owner declined publishing to the
-   Visual Studio Marketplace and to Open VSX, so the documented install route is
-   `cursor --install-extension artic-language-server-<version>.vsix`, which works.
-   Whether Cursor can reach the Microsoft Marketplace at all is answered by its
-   `product.json` `extensionsGallery.serviceUrl`; it points at Open VSX, so a listing would
-   require an Eclipse account and a signed Publisher Agreement.
-7. **Restore Linux support** — *done as far as it can be verified without a Linux machine.*
-   The build, the artic CTest suite, `npm audit`, the extension compile and the whole LSP
-   protocol suite have run on `ubuntu-latest` in
-   [.github/workflows/ci.yml](.github/workflows/ci.yml) since the CI leg was added, so the
-   server and the path handling are guarded there. What was *not* covered was the packaging
-   path, and that is where the regression actually was:
-   [artic-lsp/build.sh](artic-lsp/build.sh) had **no `set -e`**, so a failed CMake exited 0
-   and `vscode/build-lsp.sh` happily copied a stale binary into the extension — the failure
-   mode is a VSIX that ships the previous build with no error anywhere. It also `cd $(pwd)`'d
-   (a no-op that left it dependent on the caller's working directory) and carried a broken
-   duplicate command after its `exit`. Fixed, and CI's Linux leg now runs
-   `vscode/build-lsp.sh` and asserts the staged binary is executable. That step is cheap
-   because it reuses the `artic-lsp/build` tree the leg has already configured.
-   **This machine has WSL2 enabled but no distribution installed, so none of it was run on a
-   real Linux box** — do not claim otherwise; CI is the evidence.
+### 1. Zero-config projects — *not started, highest value*
 
-### Language features
+Requiring a hand-written `artic.json` before anything works is the first thing every new user
+hits, and today a file with no config is compiled **alone and silently**:
+`Workspace::collect_project_files` falls through to `{tracked_file(file)}`, so every
+cross-file reference becomes "unknown identifier" with nothing saying why.
 
-Ordered by value/effort. Items 8–12 need no submodule change and reuse infrastructure that
-already exists: `ls::NameMap` (`find_decl_at`, `find_ref_at`, `find_decl`, `find_refs` in
-[artic/include/artic/name_map.h](artic/include/artic/name_map.h)),
-`ast::Node::traverse_children()` with `TraverseFn`, and the type printer the inlay-hint
-handler already uses. The [LSP specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/)
-is the reference for what else a server can advertise.
+**What bounds this: artic has no import mechanism.** Files are concatenated on the command
+line, there is no `#include`, and `use` only aliases a module that is already in the program.
+So a project cannot be inferred from the source the way it can in Rust or Cargo — that is
+precisely why a config exists. What *can* be recovered is the build system's own answer.
 
-8. **Hover** — *done*. `TextDocument_Hover` is registered in `setup_events_definitions()` and
-   `hoverProvider` is advertised. It resolves the cursor with `find_decl_at`, falling back to
-   `find_ref_at` + `find_decl`, and renders the declaration as a fenced ```artic``` block via
-   `render_decl()` in [artic-lsp/src/server.cpp](artic-lsp/src/server.cpp). **The renderer
-   must never call `decl.print()`** — every `Decl::print` overload emits the body (and
-   `StructDecl`'s emits every field), which is a wall of text in a hover popup. It prints the
-   keyword and identifier itself and delegates only to the sub-nodes that belong in a
-   signature (`type_params`, `fn->param`, `fn->ret_type`, `aliased_type`), falling back to the
-   inferred `Node::type` where the source has no annotation (`let` bindings, inferred return
-   types). `fn->param` brings its own parentheses only when it is a tuple pattern — that is
-   what upstream's `print_parens()` handles, and it is `static` in `print.cpp`, so the check
-   is duplicated rather than exported. Guarded by [test/hover.test.mjs](test/hover.test.mjs)
-   against [test/fixtures/hover/src/shapes.art](test/fixtures/hover/src/shapes.art), which
-   holds one declaration of every kind the renderer branches on.
-9. **Document symbols** — *done*. `TextDocument_DocumentSymbol` is registered in
-   `setup_events_definitions()` and `documentSymbolProvider` is advertised. One pass over
-   `compile->program->decls` builds a hierarchical `DocumentSymbol` tree via
-   `make_document_symbol()` / `collect_document_symbols()` in
-   [artic-lsp/src/server.cpp](artic-lsp/src/server.cpp); `detail` reuses the hover renderer,
-   so the outline and the hover popup can never disagree. **`program` is the concatenation
-   of every file in the project**, so each entry is filtered on `decl.loc.file` — without
-   that the outline of one file lists the whole project. Fields of a tuple-like struct are
-   skipped: they are named `0`, `1`, … and say nothing. `implicit` is the one declaration
-   with no identifier; it is named `"implicit"` and detailed with its type. Guarded by
-   [test/document-symbols.test.mjs](test/document-symbols.test.mjs) against
-   [test/fixtures/document-symbols/src/outline.art](test/fixtures/document-symbols/src/outline.art).
-10. **Document highlight, and fix `definition` on a declaration** — *done*. `definitionProvider`
-    used to answer with *all references* when the cursor sat on a declaration, so
-    Go-to-Definition on `fn scale` jumped into whichever file happened to call it. It now
-    returns the declaration itself, and `find_refs(decl)` became
-    `TextDocument_DocumentHighlight` instead, so no capability was lost. **Highlights are
-    filtered to the requested document**: the whole project is compiled at once, and a
-    range is only meaningful in the file it was asked for — without the filter the client
-    receives ranges that point into a different buffer. The declaration is reported as
-    `Write` and every reference as `Read`. Both handlers resolve the cursor through the
-    shared `decl_at()` helper in [artic-lsp/src/server.cpp](artic-lsp/src/server.cpp)
-    (`find_decl_at`, falling back to `find_ref_at` + `find_decl`), which hover, type
-    definition and highlight now share. Guarded by
-    [test/navigation.test.mjs](test/navigation.test.mjs).
-11. **`didClose` is a no-op** — *done*. The handler now withdraws the document's diagnostics
-    and discards the editor buffer it carried. **`File::text` alone does not mean "unsaved
-    edits"** — `File::read()` fills the very same field from disk and never clears it, so
-    the first attempt (`if (text) reset`) recompiled the project on every close and
-    republished the errors it had just withdrawn. `File::text_from_editor` in
-    [artic-lsp/include/workspace.h](artic-lsp/include/workspace.h) records the difference;
-    only `set_file_content()` sets it, and `Workspace::discard_editor_buffer()` reports
-    whether there was anything to drop. When there was, the project is recompiled from disk
-    **before** the diagnostics are withdrawn — other documents may have been reported broken
-    because of edits that no longer exist, and the recompile republishes for every file in
-    the project, including the one being closed. Guarded by
-    [test/did-close.test.mjs](test/did-close.test.mjs).
-12. **Selection range** — *done*. `TextDocument_SelectionRange` is registered in
-    `setup_events_selection_range()` and `selectionRangeProvider` is advertised.
-    `spine_at()` in [artic-lsp/src/server.cpp](artic-lsp/src/server.cpp) walks
-    `program->decls` with a `TraverseFn` that returns `false` for any node not covering the
-    cursor, so one path is visited rather than the whole program. Two details the LSP does
-    not spell out but clients depend on: **every requested position needs an answer**
-    (`params.positions` is plural, and a client lines the results up with its requests by
-    index), so a position no node covers still gets an empty range at the cursor; and
-    **consecutive ranges must differ**, because many nodes wrap a child of exactly the same
-    extent and a duplicate makes the user press Shift+Alt+Right twice for one visible step.
-    The chain is built outermost-first so each node becomes the `parent` of the previous.
-    Guarded by [test/navigation.test.mjs](test/navigation.test.mjs).
-13. **Signature help** — *done*. `TextDocument_SignatureHelp` is registered in
-    `setup_events_signature_help()` and `signatureHelpProvider` is advertised with `(` and
-    `,` as trigger characters. **The call site is found in the source text, not in the AST**:
-    signature help fires on a half-written call like `dot(a,`, where the parser has produced
-    an error node rather than a `CallExpr`, so an AST walk finds nothing exactly when the
-    feature is wanted. `enclosing_bracket()` scans backwards for the innermost unclosed
-    bracket — skipping comments and string/char literals so a `(` inside one does not open a
-    frame — and counts the commas at that bracket's own nesting level, which is the active
-    parameter index. `callee_before()` then takes the identifier in front of the `(`, skipping
-    a `[...]` type-argument list, and the declaration is resolved through
-    `name_map.find_ref_at` + `find_decl` at the identifier's **first** character, so the
-    lookup does not depend on how the lexer spells the end of a token.
-    `render_signature()` prefers the *declaration* over the type, because only a declaration
-    carries parameter names; an `OptionDecl` has to be rendered from the declaration in any
-    case, since an enum option's type is its payload rather than a function type. Generic
-    functions are unwrapped through `ForallType::body`, exactly as in completion.
-    `activeParameter` is clamped to the last parameter — an out-of-range index makes VS Code
-    highlight the *first* one, which is worse than sticking to the last. Guarded by
-    [test/signature-help.test.mjs](test/signature-help.test.mjs) against
-    [test/fixtures/signature-help/src/calls.art](test/fixtures/signature-help/src/calls.art).
-14. **Go to type definition** — *done*. `TextDocument_TypeDefinition` is registered in
-    `setup_events_definitions()` and `typeDefinitionProvider` is advertised. The cursor is
-    resolved with `decl_at()`, and `declaring_type_decl()` in
-    [artic-lsp/src/server.cpp](artic-lsp/src/server.cpp) unwraps the type until a
-    user-written declaration is reached: `TypeApp` (a generic instantiation points at
-    `applied`), `AddrType` (both `PtrType` and `RefType`), `ArrayType` and
-    `ImplicitParamType`, then `StructType` / `EnumType` / `TypeAlias` / `TypeVar` /
-    `ModType`, each of which carries a `decl`. A primitive resolves to nothing and the
-    handler answers `null` rather than guessing. Guarded by
-    [test/navigation.test.mjs](test/navigation.test.mjs).
-15. **Go to implementation for implicits / `summon`** — *done, with no fork change at all*.
-    `TextDocument_Implementation` is registered in `setup_events_definitions()` and
-    `implementationProvider` is advertised. The item was scoped on the assumption that the
-    Summoner would have to be taught to record its choice; it already does. `ast::SummonExpr`
-    carries an **upstream, unguarded** `const Expr* resolved`, assigned in
-    `SummonExpr::resolve_summons` from `Summoner::resolve`, and `emit.cpp` and `print.cpp`
-    both rely on it — so the `ENABLE_LSP` question never arose.
-    `summon_at()` in [artic-lsp/src/server.cpp](artic-lsp/src/server.cpp) finds the innermost
-    `SummonExpr` covering the cursor and answers with `resolved->loc`. Two things worth
-    knowing: **an omitted implicit argument is a `SummonExpr` too** — `TypeChecker::coerce`
-    synthesises one per `ImplicitParamType` in the callee's parameter tuple, so `apply(v)`
-    resolves even though nothing in it is written down; and that synthesised node **inherits
-    the argument's location**, so the cursor has to be inside the parentheses rather than on
-    the callee. An implicit *parameter* resolves to the `PathExpr` that `IdPtrn::to_expr()`
-    synthesises, which carries the pattern's own location, so that case lands on real source
-    too. Guarded by [test/navigation.test.mjs](test/navigation.test.mjs) against
-    [test/fixtures/navigation/src/implicits.art](test/fixtures/navigation/src/implicits.art).
-16. **Workspace symbols (Ctrl+T) and code lens** — *done*. `workspaceSymbolProvider` and
-    `codeLensProvider` are advertised and handled in `setup_events_symbols()`.
-    The blocker was the server holding a single `std::optional<Compiler>`. It is sidestepped
-    rather than removed: **the index parses, it does not compile.** `SymbolIndex` in
-    [artic-lsp/src/symbol_index.cpp](artic-lsp/src/symbol_index.cpp) runs `Lexer` + `Parser`
-    over each project's own files and copies out name, container path, kind and location.
-    Name binding, type checking and summoning are what make a compile expensive and none of
-    them contributes anything a symbol picker shows.
-    Three things it has to get right. **Everything the harvest sees dies with it**: the
-    `Arena` holding the AST and the `Locator` owning every `Loc::file` string are both local
-    to `harvest_file()`, so an `IndexedSymbol` may keep no pointer into either — the
-    `lsp::Location` is built from `File::path` while they are still alive. **Parse errors go
-    to a `std::ostream(nullptr)`**, because the index runs over files that are usually
-    mid-edit and their diagnostics are the compile's business. And **the result is cached per
-    project**, because a client re-issues `workspace/symbol` on every keystroke;
-    `SymbolIndex::invalidate()` drops every project containing a changed file, and any
-    `on_config_changed` / `reload_workspace` throws the whole index away, since it is keyed
-    by project name and those names have just been re-instantiated.
-    Only a project's **own** files are indexed — a dependency is a project in its own right
-    and is indexed there, so following the edges would report every shared symbol twice.
-    **Code lens** counts `name_map.find_refs(decl)` above each `fn`, `struct`, `enum`,
-    `type`, `static` and `mod`. Fields and enum options are deliberately left out: a lens per
-    struct field turns a record into a ladder of grey text. The count is scoped to the
-    declaration's own project, because that is what the file's compile covers.
-    **The lens command carries a URI string and two integers, not LSP objects**, because
-    `vscode-languageclient` passes command arguments through unconverted;
-    `artic.showReferences` in [vscode/src/extension.ts](vscode/src/extension.ts) rebuilds a
-    `vscode.Uri`/`vscode.Position` and forwards to `editor.action.showReferences`. It is
-    registered in code only, not in `contributes.commands`, so it stays out of the palette.
-    `symbol_kind_of()` moved from `server.cpp` into
-    [artic-lsp/src/ast_render.cpp](artic-lsp/src/ast_render.cpp) so document symbols,
-    workspace symbols and code lens cannot disagree about what a declaration is.
-    Guarded by [test/workspace-symbols.test.mjs](test/workspace-symbols.test.mjs).
-17. **Parameter-name inlay hints** — *done*. `collect_parameter_hints()` in
-    [artic-lsp/src/server.cpp](artic-lsp/src/server.cpp) walks the program with a `TraverseFn`
-    that prunes anything outside the requested document, resolves every `CallExpr`'s callee
-    through `name_map.find_ref_at` + `find_decl`, and labels each argument with the parameter
-    it binds. Three things it must get right:
-    **the names come from the declaration's `Ptrn`, not from the `FnType`** — a `FnType` in
-    artic is a tuple type and carries no parameter names at all; and `fn dot(a: Vec2, b: Vec2)`
-    parses as a `TuplePtrn` of **`TypedPtrn`s**, each wrapping the `IdPtrn` that holds the
-    name, so `parameter_name()` has to unwrap `TypedPtrn` recursively. Reading `IdPtrn`
-    directly yields an empty name for every annotated parameter, i.e. for every parameter
-    anyone writes — the feature silently produces nothing.
-    **An `ImplicitParamPtrn` yields no name**: it is summoned rather than written, so it can
-    never be labelled.
-    **Only a positional match is labelled.** `tuple->args.size() != names.size()` bails out,
-    because a function whose single parameter is a tuple receives the whole tuple as one
-    argument and lining names up with elements would be a guess.
-    `argument_repeats_name()` suppresses the hint when the argument is a plain path or
-    projection spelling the parameter's own name — `add(a, b)` gets no hints, which is what
-    every other language server does. Guarded by
-    [test/language-features.test.mjs](test/language-features.test.mjs).
-18. **Completion polish** — *done, with the rest reclassified*. The `TODO` in
-    [artic-lsp/src/server.cpp](artic-lsp/src/server.cpp) is fixed: a `for a in ...` binding
-    was offered for the whole enclosing function, and so was every `match` arm binding.
-    The default branch collects declarations by walking each `local_scopes` entry, and it
-    pruned only **nested `BlockExpr`s**, so any other scope-introducing node was walked in
-    full regardless of where the cursor was. It now prunes nested `FnExpr`, `CaseExpr` and
-    `LoopExpr` as well — every scope that encloses the cursor is a `local_scopes` entry in
-    its own right, so pruning loses nothing and descending only ever duplicates bindings or
-    invents ones that are out of scope.
-    **`ForExpr::traverse_children` bypasses the desugared closure**: it yields
-    `lambda->param`, `iter`, `call->arg` and `lambda->body` directly, so the `FnExpr` node is
-    never visited and pruning `FnExpr` alone does nothing for a `for` loop — `LoopExpr` has
-    to be pruned too. To keep the loop variable available *inside* the loop, the outer walk
-    now registers `loop_binding()` (which unwraps `for_expr->call->callee` → `CallExpr` →
-    `arg` → `FnExpr` → `param` with `isa`, never `as`) and a `CaseExpr`'s pattern as scopes,
-    and `FnExpr::param` replaces the old `FnDecl`-only parameter push.
-    `use`-path completion turned out to work already, through the same `ast::Path` branch as
-    `a::b`; it is now guarded rather than assumed. What is left — a resolve handler and item
-    documentation — has no content to serve until doc comments exist, and those are
-    **Deferred**, so nothing further is scheduled here.
-    Guarded by [test/completion.test.mjs](test/completion.test.mjs).
-19. **Project overview in the config file** — *done*. The `+ N files | total matches:`
-    Information diagnostic is gone, and `artic.json` / `.artic-lsp` are annotated with inlay
-    hints instead: a project's name carries `N files` (plus `M with dependencies` when it
-    inherits any), each include pattern carries what it matched, and each exclude pattern
-    what it removed. **A working configuration is not a problem and must not appear in the
-    Problems panel** — that is the whole point of the move, and
-    [test/config-hints.test.mjs](test/config-hints.test.mjs) asserts the document publishes
-    no diagnostics at all.
-    Two things this needs that are easy to get wrong. **The counts cannot be recomputed when
-    the editor asks**: patterns are expanded once and the resulting `ConfigFile` is cached, so
-    `evaluate_patterns()` records them on `Project::pattern_matches` as it goes. And **there
-    is no position information in a parsed config** — it is plain nlohmann JSON — so
-    `ConfigDocument` in [artic-lsp/src/server.cpp](artic-lsp/src/server.cpp) locates each
-    literal by scanning the file, exactly as `publish_config_diagnostics()` does, and marks
-    every occurrence it has used so two projects sharing a `files` pattern each get their own
-    hint instead of both landing on the first line.
-    `Workspace::projects_of_config()` deliberately never parses anything: `configs_` is keyed
-    by canonical path and a config nothing has opened yet simply yields no hints.
+#### Evidence from a real checkout
 
-### Next up
+Measured against `D:/anydsl-metaproject` (690 `.art`/`.impala` files outside the LLVM trees).
+This is the reference for every decision below.
 
-Ordered by value. 20 and 21 are the two things a user actually notices; everything below
-them is hygiene.
+| Tree | Files | Shape |
+| ---- | ----: | ----- |
+| `impala/test/**` | 395 | one independent program per file, many deliberately failing |
+| `artic/test/**` | 151 | same — `test/simple` and `test/failure` are 71 files each |
+| `stincilla/**` | 75 | combinatorial: one application × one mapping × one of 7 `backend_*.impala` |
+| `runtime/platforms/artic/**` | 39 | one library, listed file by file in `artic.json` |
+| `srl-cross-compile-toolchain/tests/src` | 16 | |
+| `spmv-benchmarks/artic-sources` | 12 | |
+| `artic-utils/artic` | 2 | library, depends on `runtime` |
 
-20. **Zero-config projects** — *not started, highest value*. Requiring a hand-written
-    `artic.json` before anything works is the first thing every new user hits, and today a
-    file with no config is compiled **alone and silently**: `Workspace::collect_project_files`
-    falls through to `{tracked_file(file)}`, so every cross-file reference becomes "unknown
-    identifier" with nothing saying why.
+Two findings, both hard:
 
-    **What bounds this: artic has no import mechanism.** Files are concatenated on the
-    command line, there is no `#include`, and `use` only aliases a module that is already in
-    the program. So a project cannot be inferred from the source the way it can in Rust or
-    Cargo — that is precisely why a config exists, and no amount of cleverness in the server
-    will recover a file list from a single `.art` file. What *can* be recovered is the build
-    system's own answer.
+- **A directory is not a project.** 70 of the 71 files in `artic/test/simple` compile cleanly
+  on their own; compiled together they produce **141 errors**, all redefinitions (`test`,
+  `foo`, `E`, …). The same holds for `impala/test/**`. That is ~550 of the 690 files, and for
+  every one of them **the current single-file fallback is already the correct answer.**
+- **A real project is combinatorial, and only the build system knows the combination.**
+  `stincilla/` holds `jacobi.impala`, `gaussian.impala`, `bilateral.impala` and `matmul.impala`
+  side by side with seven mutually exclusive `backend_*.impala` and two mutually exclusive
+  `mapping_*.impala`. No directory rule can pick one of each; `stincilla/build/*.vcxproj` does.
 
-    Four strategies, strongest first. They stack; each is shippable on its own.
+So neither *whole workspace* nor *nearest source root* is a safe implicit project — both are
+wrong for the two dominant layouts. The owner's own config
+(`D:/anydsl-metaproject/artic.json`) confirms the same thing from the other side: it declares
+`runtime` and `artic-utils` as **explicit file lists** with a `folder` root and a dependency
+edge, includes `stincilla/build/jacobi.vcxproj` for the application, and gives everything else
+a `default-project` that just inherits the two libraries.
 
-    - **20a — detect build files server-side, in memory.** The C++ side can already *parse*
-      `.sln`, `build.ninja` and `.vcxproj` (`parse_sln`, `parse_ninja`, `parse_vcxproj` in
-      [artic-lsp/src/config.cpp](artic-lsp/src/config.cpp)). The only reasons a user must run
-      "Detect workspace configuration" and commit the result are that the *discovery* lives
-      in TypeScript ([vscode/src/detect.ts](vscode/src/detect.ts)) and that the *persistence*
-      is a file. Move the discovery: when `find_config_recursive` reaches the workspace root
-      without finding a config, scan the root with the same precedence `selectWorkspaceConfigFiles`
-      uses (`.sln` supersedes the projects it lists, `build.ninja` supersedes the projects
-      next to it) and instantiate those configs in memory. Every CMake- or MSBuild-driven
-      AnyDSL checkout then works with no file at all, and the build system stays the single
-      source of truth. The explicit command keeps its place for anyone who wants the result
-      pinned in the repo.
-      **Prerequisite: the server never learns the workspace root.** `reqst::Initialize` in
-      [artic-lsp/src/server.cpp](artic-lsp/src/server.cpp) reads only
-      `initializationOptions.restartFromCrash` and drops `rootUri`/`workspaceFolders` on the
-      floor. Capture them first.
-      The scan must be bounded — skip hidden and `node_modules`-style directories, cap the
-      depth, cap the number of files — and cached, because it runs on the miss path of every
-      file that has no config above it.
-    - **20b — an implicit project as the last resort.** With no config *and* no build file,
-      synthesise one project instead of falling back to a single file. Two candidate shapes,
-      and this needs a decision rather than a guess:
-      *whole workspace* (`**/*.art`, `**/*.impala` under the workspace root) is right for the
-      common case of one program per repository but produces redefinition errors in a
-      repository holding several independent programs; *nearest source root* (the open file's
-      directory plus its ancestors up to the workspace root) never merges two programs but
-      misses a sibling `lib/` directory. A third option is to start with the whole workspace
-      and fall back to per-directory grouping when the result reports redefinitions — more
-      forgiving, but the project a file lands in then depends on whether the workspace
-      happens to compile, which is hard to explain.
-    - **20c — say which project a file is in.** A status-bar item, or an
-      `artic.showProjectForFile` command, reporting the project name and where it came from
-      (config file, detected build file, implicit). Cheap, and without it 20a/20b are magic
-      that cannot be debugged. Arguably worth doing *first*, since it also makes the
-      existing config path easier to diagnose.
-    - **20d — globs from a setting.** `artic.include` / `artic.projectFiles` forwarded through
-      `initializationOptions`, so a user can point the server at sources without committing
-      anything. Lowest value of the four; only if 20a–20c leave a real gap.
+#### The work
 
-21. **Bounded parse-error recovery** — *not started*. The compiler is error-tolerant in the
-    sense that it keeps going, but not in the sense that it stays useful. Measured against
-    the current build: a file holding `fn a`, then `fn broken(x: i32) -> i32 { x +`, then
-    `fn b` and `fn c` produces **nine errors**, all but the first pointing at `fn b`, and
-    **`b` and `c` do not reach the AST at all**. In the editor that means the outline, hover,
-    completion and go-to-definition for everything below the line being typed disappear —
-    the exact situation [test/incomplete-code.test.mjs](test/incomplete-code.test.mjs) shows
-    the server surviving, but only because the break is at the *end* of the file.
+- **1a — capture the workspace root.** *Prerequisite for everything else.* `reqst::Initialize`
+  in [artic-lsp/src/server.cpp](artic-lsp/src/server.cpp) reads only
+  `initializationOptions.restartFromCrash` and drops `rootUri`/`workspaceFolders` on the floor.
+- **1b — say which project a file is in, and why.** A status-bar item and an
+  `artic.showProjectForFile` command reporting the project name and its provenance (config
+  file, detected build file, single-file fallback). Cheap, and the thing that turns the silent
+  fallback into an explainable one. **Do this first** — without it the rest is magic that
+  cannot be debugged, and on its own it already fixes the "nothing says why" half of the
+  complaint.
+- **1c — detect build files server-side, in memory.** The C++ side can already *parse* `.sln`,
+  `build.ninja` and `.vcxproj` (`parse_sln`, `parse_ninja`, `parse_vcxproj` in
+  [artic-lsp/src/config.cpp](artic-lsp/src/config.cpp)). The only reasons a user must run
+  "Detect workspace configuration" and commit the result are that the *discovery* lives in
+  TypeScript ([vscode/src/detect.ts](vscode/src/detect.ts)) and that the *persistence* is a
+  file. Move the discovery: when `find_config_recursive` reaches the workspace root without
+  finding a config, scan with the same precedence `selectWorkspaceConfigFiles` uses and
+  instantiate those configs in memory. Every CMake- or MSBuild-driven AnyDSL checkout then
+  works with no file at all, and the build system stays the single source of truth. The
+  explicit command keeps its place for anyone who wants the result pinned in the repo.
+  The scan must be bounded — skip hidden and `node_modules`-style directories, cap the depth,
+  cap the number of files — and cached, because it runs on the miss path of every file that
+  has no config above it.
+- **1d — a *narrow* implicit project, only where the evidence supports one.** With no config
+  and no build file, the fallback stays single-file unless a directory looks like one program.
+  Any rule here must be justified against the table above before it is written, and must be
+  able to *withdraw* — a rule that turns 71 clean files into 141 errors is worse than doing
+  nothing. Open question; do not implement without agreeing the rule first.
+- **1e — globs from a setting.** `artic.include` / `artic.projectFiles` forwarded through
+  `initializationOptions`, so a user can point the server at sources without committing
+  anything. Lowest value; only if 1b–1d leave a real gap.
 
-    Three amplifiers, each fixable on its own:
-    - **`Parser::expect()` consumes on mismatch.** It calls `next()` unconditionally
-      ([artic/include/artic/parser.h](artic/include/artic/parser.h)), so a missing token also
-      eats the token that would have resynchronised the parse — typically the `fn` starting
-      the next declaration. This is the single biggest amplifier and the smallest fix.
-    - **`parse_error_decl()` skips exactly one token**, so it re-reports on every token of
-      whatever follows. It needs panic-mode recovery: skip to the next token that can begin a
-      declaration (`fn struct enum type mod static implicit use #`) or to a closing brace at
-      the current nesting depth. `parse_error_expr()` wants the same, resynchronising on `;`
-      or `}`.
-    - **Nothing suppresses a cascade.** Report at most one parse error until the parser has
-      consumed a token successfully, as clang and rustc do. Whether the type checker needs
-      the same treatment once a node carries an `ErrorType` has to be measured — `check.cpp`
-      already carries fork error-tolerance changes.
+### 2. Bounded parse-error recovery — *not started*
 
-    **This is an upstreamable change, not an LSP-only one**, so it takes no `ENABLE_LSP`
-    guard — but it changes what the standalone compiler prints, so expect the `ctest` suite's
-    expected-output files to move. **Every such move is a review point, not a rubber stamp:**
-    a test that stops reporting an error it used to report is a regression, not a success.
-    Guard it by extending `incomplete-code.test.mjs` with cascade assertions — at most N
-    diagnostics for one broken construct, and the declarations *after* the break must still
-    appear in the outline. Written today, that test fails.
+The compiler is error-tolerant in the sense that it keeps going, but not in the sense that it
+stays useful. Measured against the current build: a file holding `fn a`, then
+`fn broken(x: i32) -> i32 { x +`, then `fn b` and `fn c` produces **nine errors**, all but the
+first pointing at `fn b`, and **`b` and `c` do not reach the AST at all**. In the editor that
+means the outline, hover, completion and go-to-definition for everything below the line being
+typed disappear — the exact situation
+[test/incomplete-code.test.mjs](test/incomplete-code.test.mjs) shows the server surviving, but
+only because the break is at the *end* of the file.
 
-    Sequencing: this lands in the same files as item 23, so either upstream that set first or
-    accept one larger PR.
+Three amplifiers, each fixable on its own:
 
-22. **React to files that change on disk** — *not started*. `Workspace_DidChangeWatchedFiles`
-    in [artic-lsp/src/server.cpp](artic-lsp/src/server.cpp) handles `Created` and `Deleted` by
-    reloading the whole workspace and ignores `Changed` entirely ("Handle elsewhere"), which
-    means the editor's own didOpen/didSave. So a `git checkout` that rewrites a source file,
-    or a build that regenerates `build.ninja`, leaves the server on stale projects until the
-    user happens to open the file. Item 20a makes this worse, because the build file becomes
-    the source of truth without ever being opened. Route `Changed` on a config or build file
-    to `on_config_changed`. The create/delete path is separately worth narrowing: it reloads
-    unconditionally — including the symbol index — for any watched file, and a build writing
-    into the tree will thrash it.
+- **`Parser::expect()` consumes on mismatch.** It calls `next()` unconditionally
+  ([artic/include/artic/parser.h](artic/include/artic/parser.h)), so a missing token also eats
+  the token that would have resynchronised the parse — typically the `fn` starting the next
+  declaration. This is the single biggest amplifier and the smallest fix.
+- **`parse_error_decl()` skips exactly one token**, so it re-reports on every token of whatever
+  follows. It needs panic-mode recovery: skip to the next token that can begin a declaration
+  (`fn struct enum type mod static implicit use #`) or to a closing brace at the current
+  nesting depth. `parse_error_expr()` wants the same, resynchronising on `;` or `}`.
+- **Nothing suppresses a cascade.** Report at most one parse error until the parser has
+  consumed a token successfully, as clang and rustc do. Whether the type checker needs the same
+  treatment once a node carries an `ErrorType` has to be measured — `check.cpp` already carries
+  fork error-tolerance changes.
 
-23. **Upstream the upstreamable fork set** — *not started*. Open a PR against AnyDSL/artic
-    with the non-LSP fixes listed under
-    [Working with the artic/ submodule](#working-with-the-artic-submodule): the `err.stream`
-    fix, uninitialised `Loc::Pos` members, `is_pod` → `is_standard_layout && is_trivial`, the
-    lexer/parser/`ast.cpp`/`check.cpp` error tolerance, the `pop_scope` fix, `dump()` writing
-    to `log::err`, and the `loc.h` location format. The unmerged `origin/error-tolerance`
-    branch is prior art. The longer this waits the more expensive it gets — item 21 adds to
-    exactly this set.
+**This is an upstreamable change, not an LSP-only one**, so it takes no `ENABLE_LSP` guard —
+but it changes what the standalone compiler prints, so expect the `ctest` suite's
+expected-output files to move. **Every such move is a review point, not a rubber stamp:** a
+test that stops reporting an error it used to report is a regression, not a success. Guard it
+by extending `incomplete-code.test.mjs` with cascade assertions — at most N diagnostics for one
+broken construct, and the declarations *after* the break must still appear in the outline.
+Written today, that test fails.
+
+Sequencing: this lands in the same files as item 4, so either upstream that set first or accept
+one larger PR.
+
+### 3. React to files that change on disk — *not started*
+
+`Workspace_DidChangeWatchedFiles` in [artic-lsp/src/server.cpp](artic-lsp/src/server.cpp)
+handles `Created` and `Deleted` by reloading the whole workspace and ignores `Changed` entirely
+("Handle elsewhere"), which means the editor's own didOpen/didSave. So a `git checkout` that
+rewrites a source file, or a build that regenerates `build.ninja`, leaves the server on stale
+projects until the user happens to open the file. Item 1c makes this worse, because the build
+file becomes the source of truth without ever being opened. Route `Changed` on a config or
+build file to `on_config_changed`. The create/delete path is separately worth narrowing: it
+reloads unconditionally — including the symbol index — for any watched file, and a build
+writing into the tree will thrash it.
+
+### 4. Upstream the upstreamable fork set — *not started*
+
+Open a PR against AnyDSL/artic with the non-LSP fixes listed under
+[Working with the artic/ submodule](#working-with-the-artic-submodule). The unmerged
+`origin/error-tolerance` branch is prior art. The longer this waits the more expensive it gets
+— item 2 adds to exactly this set.
 
 ### Deferred
 
-- **Doc comments** — the lexer discards `///`, so nothing can surface documentation in
-    hover or completion. Capturing them is a fork change under the `ENABLE_LSP` policy, and
-    it must not alter tokenisation for the standalone compiler.
+- **Doc comments** — the lexer discards `///`, so nothing can surface documentation in hover
+  or completion. Capturing them is a fork change under the `ENABLE_LSP` policy, and it must not
+  alter tokenisation for the standalone compiler.
 - **Performance and protocol modernisation** — text sync is `Full` (the whole buffer on every
   keystroke), every change recompiles the entire project and rebuilds the `NameMap` from
   scratch, diagnostics are push-only, and there is no `$/progress` during a compile.
-  Now measured rather than assumed: [test/latency.test.mjs](test/latency.test.mjs) puts an
-  edit round trip at ~19 ms and every warm request at 1–3 ms on a ~360-declaration project.
-  Nothing here is worth doing until a real project makes those numbers move. Revisit only if
-  a change is non-intrusive and carries no crash risk.
+  Now measured rather than assumed: [test/latency.test.mjs](test/latency.test.mjs) puts an edit
+  round trip at ~19 ms and every warm request at 1–3 ms on a ~360-declaration project. Nothing
+  here is worth doing until a real project makes those numbers move. Revisit only if a change
+  is non-intrusive and carries no crash risk.
 - **Minor gaps** — semantic tokens have no delta support and never emit the `deprecated` or
   `defaultLibrary` modifiers; call hierarchy is derivable from `references_of` plus an
-  enclosing-function lookup; rename performs no collision, shadowing or valid-identifier
-  check.
+  enclosing-function lookup; rename performs no collision, shadowing or valid-identifier check.
 - **Comments in `artic.json`** — the config is read with `is >> j`, i.e. nlohmann's defaults, so
   `//` is a parse error. The README examples were written with comments for years and were
-  therefore not copy-pasteable. Enabling `ignore_comments` is one line, but the document selector
-  in [vscode/src/extension.ts](vscode/src/extension.ts) matches `language: 'json'`, so the file
-  would also need a `jsonc` filename association to stop VS Code's own validator flagging them,
-  and the selector would have to accept both languages or config diagnostics stop arriving.
-  Documented as a limitation in the README instead. Item 20 lowers the value of this further:
-  the best config is the one nobody has to write.
+  therefore not copy-pasteable. Enabling `ignore_comments` is one line, but the document
+  selector in [vscode/src/extension.ts](vscode/src/extension.ts) matches `language: 'json'`, so
+  the file would also need a `jsonc` filename association to stop VS Code's own validator
+  flagging them, and the selector would have to accept both languages or config diagnostics
+  stop arriving. Documented as a limitation in the README instead. Item 1 lowers the value of
+  this further: the best config is the one nobody has to write.
 
 ### Parked — do not start without explicit approval
 
@@ -817,6 +544,8 @@ them is hygiene.
   `fn->type->isa<FnType>()` therefore fails for every `fn f[T](...)`, and the completion item
   silently lost its `detail`. Unwrap through `ForallType::body` first. Same trap applies
   anywhere a signature is read off a declaration.
+- **An artic `FnType` is a tuple type and carries no parameter names.** Anything that needs
+  them has to read the declaration's `Ptrn`, unwrapping `TypedPtrn` recursively.
 - **Cycle detection must run one DFS over all roots, not one per dependency edge.** The
   original loop seeded `detect_cycle(project.name, dep)` with the arguments swapped relative
   to the parameter list, cleared `visited`/`rec_stack` per edge, and erased the offending
@@ -826,6 +555,14 @@ them is hygiene.
 - **The project registry is per server session, not per workspace.** A duplicate project
   name is warned about and *ignored*, so two staged workspaces in one test suite must not
   reuse a name — the second one's projects silently do not exist.
+- **`lsp::FileUri::fromPath()` renders the path with `u8string()`, not `generic_u8string()`.**
+  On **MSVC** that keeps native backslashes, which get percent-encoded as `%5C`, so **no
+  diagnostic ever reached the editor**. MinGW's libstdc++ keeps forward slashes, which is why
+  the fast loop never showed it. Worked around with `to_file_uri()` in
+  [artic-lsp/src/server.cpp](artic-lsp/src/server.cpp); the real bug is upstream in
+  lsp-framework and is worth reporting.
+- **`ConfigLog::error("...{}", x)` does not format.** The `{}` reaches the user verbatim and
+  `x` is silently treated as the search context.
 - **A `catch` block runs after the RAII file-context scope has already unwound.**
   `ConfigParser::parse()` wraps its whole body in `try`, and `ConfigLog::scoped_file()` restores
   the previous context from its destructor — which fires while the exception propagates, before
@@ -852,13 +589,6 @@ them is hygiene.
   `scoped_file()`) records which configs a pass actually looked at; only those may be
   cleared. Guarded by [test/optional-includes.test.mjs](test/optional-includes.test.mjs),
   which opens a source file after the config and then asserts the error is still there.
-- **Optional includes (`"path?"`) mean "may be absent", not "ignore errors".** A missing
-  optional include is silent; one that exists but is broken is reported normally. The single
-  place that reports a missing include is the eager loop in `instantiate_config_json()` —
-  `Workspace::instantiate_config()` returns `nullptr` silently for a path that does not
-  exist, because the lazy lookup in `find_project_in_config_using_file()` reaches it again
-  later with no idea whether the include was optional.
-
 - **A file's identity is its canonicalised path string.** `paths::canonical_path()` in
   [artic-lsp/src/paths.cpp](artic-lsp/src/paths.cpp) is the single place that
   produces it; everything that turns a path or URI into a lookup key must go through it.
