@@ -16,6 +16,12 @@ function lineOf(text, needle) {
     return line;
 }
 
+/** The text a single-line range covers. */
+function covered(text, range) {
+    assert.equal(range.start.line, range.end.line, `expected a range on one line: ${JSON.stringify(range)}`);
+    return text.split('\n')[range.start.line].slice(range.start.character, range.end.character);
+}
+
 describe('a value that appears more than once in the config', () => {
     let client, ws, uri, text;
 
@@ -50,9 +56,8 @@ describe('a value that appears more than once in the config', () => {
     test('is reported on the member that is wrong', () => {
         const [diag] = client.diagnosticsFor(uri).filter((d) => /folder does not exist/i.test(d.message));
         assert.equal(diag.range.start.line, lineOf(text, '"folder"'));
-        assert.ok(diag.range.end.line === diag.range.start.line
-            && diag.range.end.character > diag.range.start.character,
-            `expected a span on one line, got ${JSON.stringify(diag.range)}`);
+        assert.equal(covered(text, diag.range), '"folder": "positions"',
+            'the range must cover the member, not just what it was set to');
     });
 });
 
@@ -97,7 +102,12 @@ describe('a project named after one it is not', () => {
 
         assert.deepEqual(hints.filter((h) => h.position.line === dependencyLine), [],
             'a dependency reference is not a project declaration');
-        assert.equal(hints.find((h) => h.position.line === nameLine)?.label, '1 file');
+
+        const hint = hints.find((h) => h.position.line === nameLine);
+        assert.equal(hint?.label, '1 file');
+        // The hint sits immediately past the closing quote of the name.
+        assert.ok(text.split('\n')[nameLine].slice(0, hint.position.character).endsWith('"name": "pos-lib"'),
+            `hint anchored at character ${hint.position.character}`);
     });
 });
 

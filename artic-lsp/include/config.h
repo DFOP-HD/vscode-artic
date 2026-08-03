@@ -88,30 +88,25 @@ struct ConfigLog {
     void warn (std::string msg, std::string context="") { messages.push_back(make_message(Severity::Warning,     std::move(msg), context)); }
     void info (std::string msg, std::string context="") { messages.push_back(make_message(Severity::Information, std::move(msg), context)); }
 
-    // The same, for a message that knows which part of the JSON document it is about. The
-    // literal is still recorded: the pointer is resolved against the text as parsed, and a
-    // config parsed before an edit would otherwise place the message nowhere.
-    void error_at(const std::string& ptr, std::string msg, std::string context="") { messages.push_back(make_message(Severity::Error,   std::move(msg), context, ptr)); }
-    void warn_at (const std::string& ptr, std::string msg, std::string context="") { messages.push_back(make_message(Severity::Warning, std::move(msg), context, ptr)); }
+    // The same, for a message that knows where in the document it belongs. The literal is
+    // still recorded, as the fallback for a config with no position index.
+    void error_at(std::optional<lsp::Range> range, std::string msg, std::string context="") { messages.push_back(make_message(Severity::Error,   std::move(msg), context, range)); }
+    void warn_at (std::optional<lsp::Range> range, std::string msg, std::string context="") { messages.push_back(make_message(Severity::Warning, std::move(msg), context, range)); }
 
-    // A message whose position is already known, such as a JSON syntax error.
-    void error_at_range(lsp::Range range, std::string msg) {
-        auto m = make_message(Severity::Error, std::move(msg), "");
-        m.range = range;
-        messages.push_back(std::move(m));
-    }
+    // Where a value of the config currently being parsed was written. `member` extends the
+    // range back over the `"name":` that introduces it.
+    std::optional<lsp::Range> value_range(const nlohmann::json& node) const { return json_context ? json_context->value_range(node) : std::nullopt; }
+    std::optional<lsp::Range> member_range(const nlohmann::json& node) const { return json_context ? json_context->member_range(node) : std::nullopt; }
 
 private:
-    Message make_message(Severity s, std::string msg, const std::string& context, const std::string& pointer = {}) {
-        Message m{
+    Message make_message(Severity s, std::string msg, const std::string& context, std::optional<lsp::Range> range = std::nullopt) {
+        return Message{
             .message = std::move(msg),
             .severity = s,
             .file = file_context,
             .context = context.empty() ? std::nullopt : std::make_optional(Context{.literal=text::quote(context)}),
-            .range = std::nullopt,
+            .range = range,
         };
-        if (!pointer.empty() && json_context) m.range = json_context->range(pointer);
-        return m;
     }
 };
 
@@ -128,8 +123,8 @@ struct ConfigParser {
 
     bool parse();
 private:
-    std::optional<Project> parse_project(const nlohmann::json& pj, const std::string& pointer);
-    std::unordered_set<fs::path> evaluate_patterns(Project& project, const std::string& pointer_prefix);
+    std::optional<Project> parse_project(const nlohmann::json& pj);
+    std::unordered_set<fs::path> evaluate_patterns(Project& project, const nlohmann::json* files);
 };
 
 
@@ -137,14 +132,14 @@ private:
 // The pattern is interpreted with '/' as the separator and can include
 // *, **, ? as described.
 struct FilePatternParser {
-    FilePatternParser(fs::path root, std::string pattern, config::ConfigLog& log, std::string pointer = {})
-        : root(std::move(root)), pattern(std::move(pattern)), log(log), pointer(std::move(pointer))
+    FilePatternParser(fs::path root, std::string pattern, config::ConfigLog& log, std::optional<lsp::Range> range = std::nullopt)
+        : root(std::move(root)), pattern(std::move(pattern)), log(log), range(range)
     {
         expand();
     }
 
-    static std::vector<fs::path> expand(const fs::path& root, const std::string& pattern, config::ConfigLog& log, const std::string& pointer = {}) {
-        return FilePatternParser(root, pattern, log, pointer).results;
+    static std::vector<fs::path> expand(const fs::path& root, const std::string& pattern, config::ConfigLog& log, std::optional<lsp::Range> range = std::nullopt) {
+        return FilePatternParser(root, pattern, log, range).results;
     }
 
     std::vector<fs::path> results;
@@ -158,7 +153,7 @@ private:
     fs::path root;
     std::string pattern;
     config::ConfigLog& log;
-    std::string pointer;
+    std::optional<lsp::Range> range;
 
     // State
     std::vector<std::string> parts;

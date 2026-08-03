@@ -96,9 +96,9 @@ workspaces must therefore use distinct project names, or the second workspace's
 projects silently do not exist.
 
 A config diagnostic parsed out of a JSON document is published **once**, at the
-exact value it is about. Only a message from a build file, which has no position
-index, falls back to a text search and can therefore appear at several textually
-identical strings.
+exact value it is about — nlohmann records a range for every parsed value. Only a
+message from a build file, which has no positions, falls back to a text search and
+can therefore appear at several textually identical strings.
 
 ### Testing against code that does not compile
 

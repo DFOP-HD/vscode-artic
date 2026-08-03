@@ -143,11 +143,8 @@ which is what `JsonSource` is for.
 
 #### Getting back to where a value was written
 
-**nlohmann/json keeps no source information, and there is no option that makes it.** A parsed
-value cannot say which line it came from; `parser_callback_t` reports only depth and event type,
-and the SAX interface passes a position to `parse_error()` alone. Both the diagnostics and the
-hints therefore used to locate a value by searching the document text for it — which reports
-*every* textually identical string:
+A parsed value has to be able to say where it came from, or a message about it can only be placed
+by searching the document text — which reports *every* textually identical string:
 
 - A project named after the folder it lives in (`"name": "lib", "folder": "lib"`) produced **two**
   identical "folder does not exist" diagnostics, one of them on the perfectly correct name.
@@ -155,18 +152,30 @@ hints therefore used to locate a value by searching the document text for it —
   reference, because that occurrence comes first in the file.
 - A syntax error had no context at all and landed at `0:0`.
 
-[artic-lsp/src/json_source.cpp](../artic-lsp/src/json_source.cpp) scans the document a second time
-and indexes it by RFC 6901 pointer (`/projects/0/files/2`), spanning each value together with its
-member name so `"folder": "src"` is reported rather than a bare `"src"`. `ConfigParser` builds one
-per config and hands it to `ConfigLog::scoped_file()`, so `log.error_at(pointer, ...)` resolves to
-a `lsp::Range` **while the text that produced it is still in hand** — a config edited after being
-parsed cannot move a message onto the wrong line. `Project::name_pointer` and
-`PatternMatch::pointer` carry the same information through to the inlay hints.
+nlohmann/json records exactly that, as [diagnostic positions](https://json.nlohmann.me/api/macros/json_diagnostic_positions/):
+with `JSON_DIAGNOSTIC_POSITIONS` defined, every value parsed out of a document carries
+`start_pos()` and `end_pos()`. The option is turned on for the whole build in
+[artic-lsp/cmake/Dependencies.cmake](../artic-lsp/cmake/Dependencies.cmake), because it changes the
+layout of `basic_json` and every translation unit has to agree; nlohmann's own CMake turns it into
+an `INTERFACE` compile definition on `nlohmann_json::nlohmann_json`, so every consumer of the
+target sees it. [artic-lsp/src/json_source.cpp](../artic-lsp/src/json_source.cpp) has an `#error`
+guard so a build where it failed to propagate fails loudly instead of silently losing positions.
 
-The scanner is deliberately tolerant and never reports an error: nlohmann is the authority on
-whether the document is valid, and this pass has to survive the invalid one so that
-`position_of_byte(parse_error::byte)` can place the syntax error. Text search is kept as the
-fallback, for build files (which have no index) and for a pointer that no longer resolves.
+Those positions are byte offsets into the input, so `JsonSource` keeps the text and converts:
+`position_of()` maps an offset through a line-start table, `value_range()` turns a value into an
+`lsp::Range`, and `member_range()` extends that range back over the `"name":` that introduced it —
+skipping whitespace, then a `:`, then the closing quote, then back to the opening quote — so
+`"folder": "src"` is reported rather than a bare `"src"`. An array element has no such prefix and
+is returned unchanged. `position_of_byte()` handles the one position nlohmann reports differently:
+`parse_error::byte` is 1-based and one past the offending character.
+
+`ConfigParser` builds one `JsonSource` per config and hands it to `ConfigLog::scoped_file()`, so
+`log.error_at(log.member_range(value), ...)` resolves **while the text that produced it is still in
+hand** — a config edited after being parsed cannot move a message onto the wrong line.
+`Project::name_range` and `PatternMatch::range` carry the same information through to the inlay
+hints. Text search is kept as the fallback, for build files (which have no positions at all) and
+for a range that no longer describes the value it was recorded for; `ConfigDocument::take()`
+re-checks the range against the current text before trusting it.
 `Workspace::projects_of_config()` never parses anything: `configs_` is keyed by canonical path, so
 a config nothing has opened yet simply yields no hints.
 

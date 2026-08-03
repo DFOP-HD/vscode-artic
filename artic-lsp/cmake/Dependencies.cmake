@@ -57,6 +57,10 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(lsp)
 
 # nlohmann_json
+# Diagnostic positions record where each parsed value was written, which is what places a
+# config diagnostic on the one value that is wrong. Propagated as an INTERFACE compile
+# definition, so every translation unit sees the same basic_json layout.
+set(JSON_Diagnostic_Positions ON CACHE BOOL "Record source positions on parsed JSON values" FORCE)
 FetchContent_Declare(
     nlohmann_json
     GIT_REPOSITORY https://github.com/nlohmann/json.git

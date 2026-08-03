@@ -88,12 +88,13 @@ bool ConfigParser::parse() {
             log.error("Could not read config file: \"" + origin.path.generic_string() + "\"", origin.raw_path_string);
             return false;
         }
-        // Indexed before parsing so a syntax error can be placed too. Scoped: on failure the
-        // caller keeps reporting against its own config file.
-        source = JsonSource::scan(*text);
+        // The positions nlohmann records are offsets into this text, so it has to be kept
+        // for as long as messages are made. Scoped: on failure the caller keeps reporting
+        // against its own config file.
+        source = JsonSource(*text);
         auto ctx = log.scoped_file(origin.path, &source);
 
-        nlohmann::json j = nlohmann::json::parse(*text);
+        nlohmann::json j = nlohmann::json::parse(source.text());
 
         config.path = origin.path;
         if (!j.contains("artic-config")) {
@@ -109,35 +110,34 @@ bool ConfigParser::parse() {
                 key == "include" ||
                 key == "projects"
             ) continue;
-            log.error_at("/" + json_pointer_token(key), "unknown json property \"" + key + "\"", key);
+            log.error_at(log.member_range(value), "unknown json property \"" + key + "\"", key);
         }
 
         config.version = j["artic-config"].get<std::string>();
         if (config.version == "1.0") {
-            log.warn_at("/artic-config", "Deprecated artic-config version (Newest is 2.0)", "artic-config");
+            log.warn_at(log.member_range(j["artic-config"]), "Deprecated artic-config version (Newest is 2.0)", "artic-config");
         } else if (config.version != "2.0") {
-            log.warn_at("/artic-config", "Unsupported artic-config version (Newest is 2.0)", "artic-config");
+            log.warn_at(log.member_range(j["artic-config"]), "Unsupported artic-config version (Newest is 2.0)", "artic-config");
         }
 
         if (auto pj = j.find("projects"); pj != j.end()) {
-            size_t index = 0;
             for (auto& pj : *pj) {
-                if(auto proj = parse_project(pj, "/projects/" + std::to_string(index))) {
+                if(auto proj = parse_project(pj)) {
                     log::info("Parsed project: {}", proj->name);
                     projects.push_back(*proj);
                     config.projects.push_back(proj->name);
                 }
-                ++index;
             }
         }
         if (j.contains("default-project")) {
-            auto dpj = j["default-project"];
+            // A reference, not a copy: nlohmann's positions belong to the parsed node.
+            const auto& dpj = j["default-project"];
             if(dpj.is_string()) {
                 // reference to named project
                 config.default_project = dpj.get<std::string>();
             } else if(dpj.is_object()) {
                 // inline project definition
-                if(auto proj = parse_project(dpj, "/default-project")){
+                if(auto proj = parse_project(dpj)){
                     projects.push_back(*proj);
                     config.projects.push_back(proj->name);
                     config.default_project = proj->name;
@@ -145,12 +145,10 @@ bool ConfigParser::parse() {
             }
         }
         if (j.contains("include")) {
-            size_t index = 0;
-            for (auto& incj : j["include"]) {
-                auto pointer = "/include/" + std::to_string(index++);
+            for (const auto& incj : j["include"]) {
                 auto path = incj.get<std::string>();
                 if(path == "<global>"){
-                    log.warn_at(pointer, "Deprecated: including a global configuration file with '<global>' is no longer supported", "<global>");
+                    log.warn_at(log.value_range(incj), "Deprecated: including a global configuration file with '<global>' is no longer supported", "<global>");
                     continue;
                 }
                 ConfigPath include;
@@ -170,7 +168,7 @@ bool ConfigParser::parse() {
         // has to be re-established or the message is dropped for having no file.
         auto ctx = log.scoped_file(origin.path, &source);
         auto position = source.position_of_byte(e.byte);
-        log.error_at_range(lsp::Range{ position, position }, std::string("Failed to parse json: ") + e.what());
+        log.error_at(lsp::Range{ position, position }, std::string("Failed to parse json: ") + e.what());
         return false;
     } catch (const std::exception& e) {
         auto ctx = log.scoped_file(origin.path, &source);
@@ -179,10 +177,10 @@ bool ConfigParser::parse() {
     }
 }
 
-std::optional<Project> ConfigParser::parse_project(const nlohmann::json& pj, const std::string& pointer) {
+std::optional<Project> ConfigParser::parse_project(const nlohmann::json& pj) {
     Project p;
     if (!pj.contains("name")) {
-        log.error_at(pointer,
+        log.error_at(log.member_range(pj),
             "Every project must have a name"
             "\nExample: " + nlohmann::json{{"name", "my_project"}}.dump(),
             "projects"
@@ -190,7 +188,8 @@ std::optional<Project> ConfigParser::parse_project(const nlohmann::json& pj, con
         return std::nullopt;
     }
     p.name = pj["name"].get<std::string>();
-    p.name_pointer = pointer + "/name";
+    // The value only: this one places an inlay hint, so it has to end after the name.
+    p.name_range = log.value_range(pj["name"]);
 
     std::string folder_ptrn = pj.value<std::string>("folder", "");
     fs::path root = config.path.parent_path();
@@ -201,7 +200,7 @@ std::optional<Project> ConfigParser::parse_project(const nlohmann::json& pj, con
         if(fs::exists(res) && fs::is_directory(res)) {
             p.root_dir = res;
         } else {
-            log.error_at(pointer + "/folder", "Project folder does not exist: " + res.generic_string(), folder_ptrn);
+            log.error_at(log.member_range(pj["folder"]), "Project folder does not exist: " + res.generic_string(), folder_ptrn);
             p.root_dir = root;
         }
     }
@@ -209,14 +208,15 @@ std::optional<Project> ConfigParser::parse_project(const nlohmann::json& pj, con
     p.dependencies =  pj.value<std::vector<std::string>>("dependencies", {});
     p.origin = config.path;
     p.file_patterns = pj.value<std::vector<std::string>>("files", {});
-    auto files = evaluate_patterns(p, pointer + "/files/");
-    for (auto& file : files) {
+    auto files = pj.find("files");
+    auto matched = evaluate_patterns(p, files == pj.end() ? nullptr : &*files);
+    for (auto& file : matched) {
         p.files.push_back(paths::canonical_path(file));
     }
     return p;
 }
 
-std::unordered_set<fs::path> ConfigParser::evaluate_patterns(Project& project, const std::string& pointer_prefix) {
+std::unordered_set<fs::path> ConfigParser::evaluate_patterns(Project& project, const nlohmann::json* files) {
     // evaluate file patterns, keeping each one's index so a message can point back at it
     std::vector<size_t> include_patterns;
     std::vector<size_t> exclude_patterns;
@@ -226,7 +226,10 @@ std::unordered_set<fs::path> ConfigParser::evaluate_patterns(Project& project, c
     }
 
     fs::path root_dir = project.root_dir;
-    auto pointer_of = [&](size_t i) { return pointer_prefix + std::to_string(i); };
+    auto range_of = [&](size_t i) -> std::optional<lsp::Range> {
+        if (!files || !files->is_array() || i >= files->size()) return std::nullopt;
+        return log.value_range((*files)[i]);
+    };
 
     // Collect all files matching include patterns and not matching exclude patterns
     std::unordered_set<fs::path> matched_files;
@@ -234,11 +237,11 @@ std::unordered_set<fs::path> ConfigParser::evaluate_patterns(Project& project, c
     // Evaluate include patterns
     for (auto i : include_patterns) {
         const auto& pattern = project.file_patterns[i];
-        auto pointer = pointer_of(i);
-        auto matches = FilePatternParser::expand(root_dir, pattern, log, pointer);
+        auto range = range_of(i);
+        auto matches = FilePatternParser::expand(root_dir, pattern, log, range);
         if (matches.empty()) {
-            log.warn_at(pointer, "0 files", pattern);
-            project.pattern_matches.push_back({ .pattern = pattern, .pointer = pointer });
+            log.warn_at(range, "0 files", pattern);
+            project.pattern_matches.push_back({ .pattern = pattern, .range = range });
             continue;
         }
 
@@ -252,17 +255,17 @@ std::unordered_set<fs::path> ConfigParser::evaluate_patterns(Project& project, c
             .pattern = pattern,
             .matched = matches.size(),
             .changed = after - before,
-            .pointer = pointer,
+            .range = range,
         });
     }
 
     for (auto i : exclude_patterns) {
         const auto& pattern = project.file_patterns[i];
-        auto pointer = pointer_of(i);
-        auto matches = FilePatternParser::expand(root_dir, pattern.substr(1), log, pointer);
+        auto range = range_of(i);
+        auto matches = FilePatternParser::expand(root_dir, pattern.substr(1), log, range);
         if (matches.empty()) {
-            log.warn_at(pointer, "0 files excluded", pattern);
-            project.pattern_matches.push_back({ .pattern = pattern, .excludes = true, .pointer = pointer });
+            log.warn_at(range, "0 files excluded", pattern);
+            project.pattern_matches.push_back({ .pattern = pattern, .excludes = true, .range = range });
             continue;
         }
         auto before = matched_files.size();
@@ -276,7 +279,7 @@ std::unordered_set<fs::path> ConfigParser::evaluate_patterns(Project& project, c
             .matched = matches.size(),
             .changed = before - after,
             .excludes = true,
-            .pointer = pointer,
+            .range = range,
         });
     }
     return matched_files;
@@ -294,7 +297,7 @@ void FilePatternParser::expand() {
     auto original_pattern = pattern;
     expand_home();
     if (!fs::exists(root) || !fs::is_directory(root)) {
-        log.error_at(pointer, "Folder does not exist: " + root.generic_string(), original_pattern);
+        log.error_at(range, "Folder does not exist: " + root.generic_string(), original_pattern);
         return;
     }
     split();
@@ -350,7 +353,7 @@ void FilePatternParser::dfs(size_t idx,const fs::path& base){
         for(auto it = fs::directory_iterator(base); it != fs::directory_iterator(); ++it) {
             if(!it->is_directory()) continue;
             if(++dir_count > 20'000) { // arbitrary safety cap
-                log.warn_at(pointer, "Stopped expanding '**' due to excessive directories", part);
+                log.warn_at(range, "Stopped expanding '**' due to excessive directories", part);
                 break;
             }
             dfs(idx, it->path()); // stay on same ** index
@@ -378,7 +381,7 @@ void FilePatternParser::dfs(size_t idx,const fs::path& base){
     // Wildcard segment (but not **) -> enumerate entries in this directory only
     size_t checked = 0;
     for(auto it = fs::directory_iterator(base); it != fs::directory_iterator(); ++it) {
-        if(++checked > 1'000) { log.warn_at(pointer, "Stopped expanding wildcard: too many entries", part); break; }
+        if(++checked > 1'000) { log.warn_at(range, "Stopped expanding wildcard: too many entries", part); break; }
         const auto& path = it->path();
         std::string filename = path.filename().generic_string();
         if(fnmatch(part.c_str(), filename.c_str(), 0) == 0) {

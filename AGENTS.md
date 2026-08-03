@@ -31,7 +31,7 @@ one of the utility modules, so a handler stays readable:
 | `lsp_convert.h` / `.cpp` | `artic::ls` | Conversions between artic's `Loc`/`Severity`/`Diagnostic` and the `lsp::` protocol types, plus `contains(range, position)`. |
 | `ast_render.h` / `.cpp` | `artic::ls` | Turning AST nodes into display strings: `print_to_string`, `print_param_list`, `render_decl`, and the `symbol_kind_of` mapping. Hover, document symbols, workspace symbols, code lens and completion all render through here so they cannot disagree. |
 | `symbol_index.{h,cpp}` | `artic::ls` | The parse-only, per-project declaration index behind `workspace/symbol`. |
-| `json_source.{h,cpp}` | `artic::ls` | Indexes a JSON document by RFC 6901 pointer so a config diagnostic or hint can point at the value it is about. nlohmann/json discards positions and cannot be configured to keep them. |
+| `json_source.{h,cpp}` | `artic::ls` | Turns nlohmann's `start_pos()`/`end_pos()` byte offsets into `lsp::Range`, so a config diagnostic or hint can point at the value it is about. Keeps the document text, because that is what the offsets index. |
 | `workspace.{h,cpp}` | `artic::ls::workspace` | Config discovery, the project registry, file tracking. |
 | `config.{h,cpp}` | `artic::ls::config` | Parsing `artic.json`, `.artic-lsp`, `.vcxproj`, `.sln`, `build.ninja`, the bounded workspace scan behind zero-config projects, and `ConfigLog`. |
 | `compile.{h,cpp}` | `artic::ls` | Driving `libartic` and holding the resulting AST, `Locator` and `NameMap`. |
@@ -547,6 +547,19 @@ Open a PR against AnyDSL/artic with the non-LSP fixes listed under
   lsp-framework and is worth reporting.
 - **`ConfigLog::error("...{}", x)` does not format.** The `{}` reaches the user verbatim and
   `x` is silently treated as the search context.
+- **`JSON_DIAGNOSTIC_POSITIONS` changes the layout of `basic_json`, so it is a build-wide
+  setting, not a per-file one.** It is forced on in
+  [artic-lsp/cmake/Dependencies.cmake](artic-lsp/cmake/Dependencies.cmake) *before*
+  `FetchContent_MakeAvailable`, and nlohmann's own CMake turns it into an `INTERFACE` compile
+  definition on `nlohmann_json::nlohmann_json` so every consumer agrees. Because
+  `JSON_Diagnostic_Positions` is a cached option on a `FetchContent` subproject, a stale build
+  tree can silently keep the old value — `artic-lsp/src/json_source.cpp` carries an `#error`
+  guard so that fails the build instead of quietly losing every position. Confirm with
+  `Diagnostic positions enabled (JSON_DIAGNOSTIC_POSITIONS=1)` in the configure output.
+- **`end_pos()` is exclusive; `parse_error::byte` is not.** A value's range is
+  `[start_pos(), end_pos())`, but the byte a parse error reports is 1-based *and* one past the
+  offending character — hence the separate `position_of_byte()`. Pinned by the exact-span
+  assertions in [test/config-positions.test.mjs](test/config-positions.test.mjs).
 - **A `catch` block runs after the RAII file-context scope has already unwound.**
   `ConfigParser::parse()` wraps its whole body in `try`, and `ConfigLog::scoped_file()` restores
   the previous context from its destructor — which fires while the exception propagates, before

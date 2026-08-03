@@ -4,7 +4,6 @@
 #include "compile.h"
 #include "config.h"
 #include "crash.h"
-#include "json_source.h"
 #include "lsp_convert.h"
 #include "paths.h"
 #include "workspace.h"
@@ -1661,10 +1660,9 @@ void Server::publish_config_diagnostics(const workspace::config::ConfigLog& log)
     std::unordered_map<std::filesystem::path, std::vector<lsp::Diagnostic>> fileDiags;
 
     // Fallback for a message that carries no range: build-file parsers have no position
-    // information at all, and a JSON pointer resolved against a config that has since been
-    // edited may no longer exist. Searching the text finds every textual occurrence, so one
-    // logical error can produce several diagnostics -- which is exactly why anything parsed
-    // out of a JSON config carries a range instead.
+    // information at all. Searching the text finds every textual occurrence, so one logical
+    // error can produce several diagnostics -- which is exactly why anything parsed out of
+    // a JSON config carries the range nlohmann recorded for the value instead.
     auto find_in_file = [](std::filesystem::path const& file, std::string_view literal) -> std::vector<lsp::Range> {
         std::vector<lsp::Range> ranges;
         if(literal.empty()) return ranges;
@@ -1944,15 +1942,15 @@ void collect_parameter_hints(
 
 /// A config document, scanned for the string literals a project is described by.
 ///
-/// A hint is placed by resolving the JSON pointer the parser recorded for the value, which
-/// is exact. Text search is kept only for a project that came from a build file, where
-/// there is no pointer: two projects may well share a `files` pattern, so an occurrence is
-/// annotated at most once.
+/// A hint is placed at the range the parser recorded for the value, which is exact. Text
+/// search is the fallback for a project that came from a build file, where there is no
+/// range, and for a range that no longer describes the value -- the config is reparsed on
+/// change, but the hints are computed against whatever is on disk now. Two projects may
+/// well share a `files` pattern, so an occurrence is annotated at most once.
 class ConfigDocument {
 public:
     explicit ConfigDocument(const fs::path& file) {
         if (auto text = paths::read_file(file)) {
-            source_ = JsonSource::scan(*text);
             std::istringstream is(*text);
             for (std::string line; std::getline(is, line); ) lines_.push_back(std::move(line));
         }
@@ -1960,13 +1958,11 @@ public:
 
     bool empty() const { return lines_.empty(); }
 
-    /// End position of the value at `pointer`, or of the next unannotated occurrence of
-    /// `"value"` when the pointer does not resolve.
-    std::optional<lsp::Position> take(const std::string& pointer, const std::string& value) {
-        if (!pointer.empty()) {
-            if (auto range = source_.range(pointer)) return range->end;
-        }
+    /// End position of `value` at `range`, or of the next unannotated occurrence of
+    /// `"value"` when there is no usable range.
+    std::optional<lsp::Position> take(const std::optional<lsp::Range>& range, const std::string& value) {
         auto quoted = text::quote(value);
+        if (range && holds(*range, quoted)) return range->end;
         for (lsp::uint row = 0; row < lines_.size(); ++row) {
             const auto& line = lines_[row];
             for (size_t col = line.find(quoted); col != std::string::npos; col = line.find(quoted, col + 1)) {
@@ -1978,7 +1974,13 @@ public:
     }
 
 private:
-    JsonSource source_;
+    bool holds(const lsp::Range& range, const std::string& quoted) const {
+        if (range.start.line != range.end.line || range.start.line >= lines_.size()) return false;
+        const auto& line = lines_[range.start.line];
+        if (range.end.character > line.size() || range.end.character - range.start.character != quoted.size()) return false;
+        return line.compare(range.start.character, quoted.size(), quoted) == 0;
+    }
+
     std::vector<std::string> lines_;
     std::set<std::pair<lsp::uint, size_t>> used_;
 };
@@ -2011,7 +2013,7 @@ void collect_config_hints(
         auto total = workspace.total_file_count(*project);
         std::string label = file_count(own);
         if (total != own) label += ", " + std::to_string(total) + " with dependencies";
-        add(doc.take(project->name_pointer, project->name), std::move(label));
+        add(doc.take(project->name_range, project->name), std::move(label));
 
         for (const auto& match : project->pattern_matches) {
             std::string pattern_label = match.excludes
@@ -2019,7 +2021,7 @@ void collect_config_hints(
                 : file_count(match.changed);
             if (match.matched != match.changed)
                 pattern_label += " of " + std::to_string(match.matched) + " matched";
-            add(doc.take(match.pointer, match.pattern), std::move(pattern_label));
+            add(doc.take(match.range, match.pattern), std::move(pattern_label));
         }
     }
 }
