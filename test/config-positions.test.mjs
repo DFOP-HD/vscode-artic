@@ -1,7 +1,7 @@
-// Where a configuration diagnostic or hint is placed. nlohmann/json discards source
-// positions, so both used to be located by searching the document text for the value they
-// were about -- which reports every textually identical string, not the one that is wrong.
-// The document is indexed by JSON pointer now; these are the cases where that shows.
+// Where a configuration diagnostic or hint is placed. Both used to be located by searching
+// the document text for the value they were about -- which reports every textually identical
+// string, not the one that is wrong. nlohmann records a range for every parsed value now;
+// these are the cases where that shows.
 
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';

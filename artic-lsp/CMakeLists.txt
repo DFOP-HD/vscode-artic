@@ -33,7 +33,6 @@ add_executable(artic-lsp
     include/ast_render.h
     include/compile.h
     include/config.h
-    include/crash.h
     include/json_source.h
     include/lsp_convert.h
     include/paths.h
@@ -44,7 +43,6 @@ add_executable(artic-lsp
     src/ast_render.cpp
     src/server.cpp
     src/workspace.cpp
-    src/crash.cpp
     src/compile.cpp
     src/config.cpp
     src/json_source.cpp

@@ -189,6 +189,14 @@ export class LspClient {
     }
 
     /**
+     * Reports files changing on disk, as the editor's own file watcher would.
+     * `type` is 1 Created, 2 Changed, 3 Deleted.
+     */
+    changeWatchedFiles(changes) {
+        this.notify('workspace/didChangeWatchedFiles', { changes });
+    }
+
+    /**
      * Forgets every diagnostics notification received so far, so a later
      * `waitForDiagnostics()` waits for a fresh one instead of replaying the log.
      */

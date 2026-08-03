@@ -3,7 +3,6 @@
 #include "ast_render.h"
 #include "compile.h"
 #include "config.h"
-#include "crash.h"
 #include "lsp_convert.h"
 #include "paths.h"
 #include "workspace.h"
@@ -65,7 +64,6 @@ Server::Server()
     : connection_(lsp::Connection(lsp::io::standardIO()))
     , message_handler_(this->connection_)
 {
-    crash::setup_crash_handler();
     setup_events();
 }
 
@@ -248,7 +246,10 @@ void Server::setup_events_modifications() {
         log::info("\n[LSP] <<< TextDocument DidClose");
         auto path = absolute_path(params.textDocument.uri.path());
 
-        if(get_file_type(path) != FileType::SourceFile) return;
+        if(get_file_type(path) != FileType::SourceFile) {
+            open_configs_.erase(path);
+            return;
+        }
 
         // Unsaved edits die with the buffer, so everything compiled from them is stale.
         // Other documents may still be reported broken because of edits that no longer
@@ -275,13 +276,8 @@ void Server::setup_events_modifications() {
         if(get_file_type(path) == FileType::SourceFile) {
             ensure_compile(path.string());
         } else {
-            workspace::config::ConfigLog log{};
-            bool known = workspace_->on_config_changed(path, log);
-            // `on_config_changed` re-instantiates every project, so anything the index
-            // cached under a project name now describes a project that no longer exists.
-            symbol_index_ = SymbolIndex{};
-            if(known) compile.reset();
-            publish_config_diagnostics(log);
+            open_configs_.insert(path);
+            reload_config(path);
         }
     });
     message_handler_.add<notif::TextDocument_DidChange>([this](notif::TextDocument_DidChange::Params&& params) {
@@ -303,11 +299,7 @@ void Server::setup_events_modifications() {
         log::info("\n[LSP] <<< TextDocument DidSave");
         std::filesystem::path file = absolute_path(params.textDocument.uri.path());
         if(get_file_type(file) == FileType::ConfigFile) {
-            workspace::config::ConfigLog log{};
-            bool known = workspace_->on_config_changed(file, log);
-            symbol_index_ = SymbolIndex{};
-            if(known) compile.reset();
-            publish_config_diagnostics(log);
+            reload_config(file);
             return;
         }
     });
@@ -320,6 +312,12 @@ void Server::setup_events_modifications() {
         reload_workspace();
     });
     message_handler_.add<notif::Workspace_DidChangeWatchedFiles>([this](notif::Workspace_DidChangeWatchedFiles::Params&& params) {
+        // A source file appearing or disappearing changes what a `files` glob expands to,
+        // so only those two need the whole workspace rebuilt. A config or build file whose
+        // *content* changed invalidates itself and nothing else -- and it is the one thing
+        // no editor event covers, because a `git checkout` or a build regenerating
+        // `build.ninja` never opens it.
+        std::vector<fs::path> changed_configs;
         for(auto& change : params.changes) {
             auto path = absolute_path(change.uri.path());
 
@@ -329,10 +327,20 @@ void Server::setup_events_modifications() {
                     reload_workspace();
                     return;
                 }
-                case lsp::FileChangeType::Changed: break; // Handle elsewhere
+                case lsp::FileChangeType::Changed: {
+                    if(get_file_type(path) != FileType::ConfigFile) break;
+                    // The editor owns this buffer, so didSave has already handled it.
+                    if(open_configs_.count(path)) break;
+                    changed_configs.push_back(path);
+                    break;
+                }
                 case lsp::FileChangeType::MAX_VALUE: break;
             }
         }
+        if(changed_configs.empty()) return;
+
+        log::info("\n[LSP] <<< Workspace DidChangeWatchedFiles: {} config(s) changed on disk", changed_configs.size());
+        for(const auto& config : changed_configs) reload_config(config);
     });
 }
 
@@ -1753,6 +1761,23 @@ void Server::reload_workspace() {
     if (compile) {
         compile_this_and_related_files(compile->active_file);
     }
+}
+
+void Server::reload_config(const fs::path& file) {
+    workspace::config::ConfigLog log{};
+    bool known = workspace_->on_config_changed(file, log);
+    // `on_config_changed` re-instantiates every project, so anything the index cached
+    // under a project name now describes a project that no longer exists.
+    symbol_index_ = SymbolIndex{};
+
+    // Captured before the reset: what the editor is showing was derived from the config
+    // that just moved, so it has to be built again from the new one.
+    std::optional<fs::path> active;
+    if(known && compile) active = compile->active_file;
+    if(known) compile.reset();
+
+    publish_config_diagnostics(log);
+    if(active) compile_this_and_related_files(*active);
 }
 
 

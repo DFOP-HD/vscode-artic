@@ -64,6 +64,8 @@ private:
     static FileType get_file_type(const std::filesystem::path& file);
 
     void reload_workspace();
+    /// Re-read one config or build file and drop everything derived from it.
+    void reload_config(const std::filesystem::path& file);
     void publish_config_diagnostics(const workspace::config::ConfigLog& log);
 
     lsp::Connection connection_;
@@ -82,6 +84,10 @@ private:
     // Files that currently show config diagnostics, so they can be cleared once
     // the config is fixed. The editor keeps the last published set otherwise.
     std::set<std::filesystem::path> published_config_diagnostics_;
+
+    // Config and build files the editor has open. A watcher event for one of these is the
+    // echo of the save that didSave already handled, not an outside change.
+    std::set<std::filesystem::path> open_configs_;
 };
 
 } // namespace artic::ls
