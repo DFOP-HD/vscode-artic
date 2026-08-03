@@ -182,6 +182,12 @@ the editor is Windows.
   `vscode/build/bin/` behind. `vscode/publish.sh` no longer builds anything: it bumps the
   version, tags and pushes, and [.github/workflows/release.yml](.github/workflows/release.yml)
   does the rest.
+- **To try a change in the editor: `powershell -File vscode/install.ps1`** (Windows) or
+  `vscode/package.sh install` (Linux/macOS). [vscode/install.ps1](vscode/install.ps1) rebuilds
+  the server, stages it, packages the VSIX and installs it with the first `code`/`cursor` CLI
+  on `PATH` — in a remote window that is the *server* CLI, i.e. the host holding the workspace,
+  which is the one that matters. It skips `npm install` when `node_modules` already exists.
+  Reload the window afterwards; the old server process keeps running otherwise.
 - **Cursor is a supported target and must stay one.** `engines.vscode: ^1.75.0` is satisfied by
   every current Cursor, and the extension uses no proprietary or proposed API (only `workspace`,
   `window`, `commands`, `Uri`, `RelativePattern`, `FileSystemError`). Do not raise the engine
