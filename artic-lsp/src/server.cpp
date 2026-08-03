@@ -145,11 +145,14 @@ void Server::setup_events_initialization() {
                     .retriggerCharacters = std::vector<std::string>{")"}
                 },
                 .definitionProvider = true,
+                .typeDefinitionProvider = true,
                 .referencesProvider = true,
+                .documentHighlightProvider = true,
                 .documentSymbolProvider = true,
                 .renameProvider = lsp::RenameOptions {
                     .prepareProvider = true
                 },
+                .selectionRangeProvider = true,
                 .semanticTokensProvider = lsp::SemanticTokensOptions{
                     .legend = lsp::SemanticTokensLegend{
                         .tokenTypes = {
@@ -206,8 +209,28 @@ void Server::setup_events_modifications() {
 
     // Textdocument ----------------------------------------------------------------------
 
-    message_handler_.add<notif::TextDocument_DidClose>([](notif::TextDocument_DidClose::Params&& params) {
+    message_handler_.add<notif::TextDocument_DidClose>([this](notif::TextDocument_DidClose::Params&& params) {
         log::info("\n[LSP] <<< TextDocument DidClose");
+        auto path = absolute_path(params.textDocument.uri.path());
+
+        if(get_file_type(path) != FileType::SourceFile) return;
+
+        // Unsaved edits die with the buffer, so everything compiled from them is stale.
+        // Other documents may still be reported broken because of edits that no longer
+        // exist, so the project has to be rebuilt from what is on disk.
+        if(workspace_->discard_editor_buffer(path)) {
+            compile.reset();
+            compile_this_and_related_files(path);
+        }
+
+        // The editor no longer owns the document, so its diagnostics have to go with it.
+        // This has to come last: the recompile above republishes them.
+        message_handler_.sendNotification<notif::TextDocument_PublishDiagnostics>(
+            notif::TextDocument_PublishDiagnostics::Params {
+                .uri = to_file_uri(path),
+                .diagnostics = {}
+            }
+        );
     });
     message_handler_.add<notif::TextDocument_DidOpen>([this](notif::TextDocument_DidOpen::Params&& params) {
         log::info("\n[LSP] <<< TextDocument DidOpen");
@@ -531,7 +554,34 @@ void collect_document_symbols(
     }
 }
 
-std::optional<IdentifierOccurrences> find_occurrences_of_identifier(const ls::NameMap& name_map, const Loc& cursor, bool include_declaration) {
+/// The declaration the cursor names, whether it sits on the declaration itself or on a
+/// reference to it.
+const ast::NamedDecl* decl_at(const ls::NameMap& name_map, const Loc& cursor) {
+    if(auto decl = name_map.find_decl_at(cursor)) return decl;
+    if(auto ref = name_map.find_ref_at(cursor)) return name_map.find_decl(*ref);
+    return nullptr;
+}
+
+/// The declaration a type originates from, looking through the wrappers that stand between
+/// an expression's type and the `struct`/`enum`/`type` that declared it.
+const ast::NamedDecl* declaring_type_decl(const Type* type) {
+    while (type) {
+        if (auto app = type->isa<TypeApp>())            { type = app->applied;        continue; }
+        if (auto addr = type->isa<AddrType>())          { type = addr->pointee;       continue; }
+        if (auto array = type->isa<ArrayType>())        { type = array->elem;         continue; }
+        if (auto implicit = type->isa<ImplicitParamType>()) { type = implicit->underlying; continue; }
+        break;
+    }
+    if (!type) return nullptr;
+    if (auto struct_type = type->isa<StructType>()) return &struct_type->decl;
+    if (auto enum_type = type->isa<EnumType>())     return &enum_type->decl;
+    if (auto alias = type->isa<TypeAlias>())        return &alias->decl;
+    if (auto var = type->isa<TypeVar>())            return &var->decl;
+    if (auto mod = type->isa<ModType>())            return &mod->decl;
+    return nullptr;
+}
+
+std::optional<IdentifierOccurrences> find_occurrences_of_identifier(const ls::NameMap& name_map, const Loc& cursor) {
     Loc cursor_range;
     const ast::NamedDecl* target_decl = name_map.find_decl_at(cursor);
     if(target_decl) {
@@ -550,10 +600,7 @@ std::optional<IdentifierOccurrences> find_occurrences_of_identifier(const ls::Na
 
     std::vector<lsp::Location> locations;
 
-    // Include the declaration itself if requested
-    if (include_declaration) {
-        locations.push_back(to_location(target_decl->id.loc));
-    }
+    locations.push_back(to_location(target_decl->id.loc));
 
     // Find all references to this declaration
     for (auto ref : name_map.find_refs(target_decl)) {
@@ -637,16 +684,71 @@ void Server::setup_events_definitions() {
             }
             return nullptr;
         }
-        // When on a declaration try find references
-        if(auto occurences = find_occurrences_of_identifier(name_map, cursor, false)){
-            log::info("[LSP] >>> Found {} occurrences of identifier", occurences->all_occurences.size());
-            if(occurences->all_occurences.empty()) return { occurences->declaration_range };
-            return occurences->all_occurences;
+        // On a declaration the definition is the declaration itself. Returning its
+        // references instead is what documentHighlight and references are for.
+        if(auto decl = name_map.find_decl_at(cursor)) {
+            log::info("[LSP] >>> TextDocument Definition is the declaration '{}' itself", decl->id.name);
+            return { to_location(decl->id.loc) };
         }
-
 
         log::info("[LSP] >>> return TextDocument Definition <not found>");
         return nullptr;
+    });
+
+    message_handler_.add<reqst::TextDocument_TypeDefinition>([this](reqst::TextDocument_TypeDefinition::Params&& params) -> reqst::TextDocument_TypeDefinition::Result {
+        log_request("TextDocument TypeDefinition", params.textDocument, params.position);
+
+        if(get_file_type(params.textDocument.uri.path()) != FileType::SourceFile) return nullptr;
+        ensure_compile(params.textDocument.uri.path());
+        auto cursor = to_loc(params.textDocument, params.position);
+
+        const ast::NamedDecl* decl = decl_at(compile->name_map, cursor);
+        if(!decl) {
+            log::info("[LSP] >>> TypeDefinition found no symbol at cursor");
+            return nullptr;
+        }
+
+        const ast::NamedDecl* type_decl = declaring_type_decl(decl->type);
+        if(!type_decl) {
+            log::info("[LSP] >>> TypeDefinition: '{}' has no user-declared type", decl->id.name);
+            return nullptr;
+        }
+
+        log::info("[LSP] >>> TypeDefinition '{}' -> '{}'", decl->id.name, type_decl->id.name);
+        return lsp::Definition(to_location(type_decl->id.loc));
+    });
+
+    message_handler_.add<reqst::TextDocument_DocumentHighlight>([this](reqst::TextDocument_DocumentHighlight::Params&& params) -> reqst::TextDocument_DocumentHighlight::Result {
+        log_request("TextDocument DocumentHighlight", params.textDocument, params.position);
+
+        if(get_file_type(params.textDocument.uri.path()) != FileType::SourceFile) return nullptr;
+        ensure_compile(params.textDocument.uri.path());
+        auto cursor = to_loc(params.textDocument, params.position);
+        auto& name_map = compile->name_map;
+
+        const ast::NamedDecl* decl = decl_at(name_map, cursor);
+        if(!decl) {
+            log::info("[LSP] >>> DocumentHighlight found no symbol at cursor");
+            return nullptr;
+        }
+
+        // The whole project is compiled at once, so occurrences in other files must be
+        // dropped: a highlight range is only meaningful in the document that was asked for.
+        lsp::Array<lsp::DocumentHighlight> highlights;
+        auto add = [&](const Loc& loc, lsp::DocumentHighlightKind kind) {
+            if(!loc.file || *loc.file != *cursor.file) return;
+            highlights.push_back(lsp::DocumentHighlight{
+                .range = to_range(loc),
+                .kind = lsp::DocumentHighlightKindEnum(kind)
+            });
+        };
+
+        add(decl->id.loc, lsp::DocumentHighlightKind::Write);
+        for (auto ref : name_map.find_refs(decl)) add(name_map.get_identifier(ref).loc, lsp::DocumentHighlightKind::Read);
+
+        if(highlights.empty()) return nullptr;
+        log::info("[LSP] >>> Returning {} highlights of '{}'", highlights.size(), decl->id.name);
+        return highlights;
     });
 
     message_handler_.add<reqst::TextDocument_References>([this](lsp::ReferenceParams&& params) -> reqst::TextDocument_References::Result {
@@ -655,7 +757,7 @@ void Server::setup_events_definitions() {
         if(get_file_type(params.textDocument.uri.path()) != FileType::SourceFile) return {};
         ensure_compile(params.textDocument.uri.path());
         auto cursor = to_loc(params.textDocument, params.position);
-        auto occurences = find_occurrences_of_identifier(compile->name_map, cursor, true);
+        auto occurences = find_occurrences_of_identifier(compile->name_map, cursor);
         if(!occurences) return {};
         log::info("[LSP] >>> Found {} occurrences of identifier", occurences->all_occurences.size());
         return occurences->all_occurences;
@@ -667,7 +769,7 @@ void Server::setup_events_definitions() {
         if(get_file_type(params.textDocument.uri.path()) != FileType::SourceFile) return nullptr;
         ensure_compile(params.textDocument.uri.path());
         auto cursor = to_loc(params.textDocument, params.position);
-        auto occurences = find_occurrences_of_identifier(compile->name_map, cursor, true);
+        auto occurences = find_occurrences_of_identifier(compile->name_map, cursor);
         if(!occurences) {
             log::info("[LSP] >>> PrepareRename found no symbol at cursor");
             return nullptr;
@@ -688,7 +790,7 @@ void Server::setup_events_definitions() {
         if(get_file_type(params.textDocument.uri.path()) != FileType::SourceFile) return nullptr;
         ensure_compile(params.textDocument.uri.path());
         auto cursor = to_loc(params.textDocument, params.position);
-        auto occurences = find_occurrences_of_identifier(compile->name_map, cursor, true);
+        auto occurences = find_occurrences_of_identifier(compile->name_map, cursor);
         if(!occurences) {
             log::info("[LSP] >>> Rename found no symbol at cursor");
             return nullptr;
@@ -1551,6 +1653,84 @@ void Server::reload_workspace() {
     if (compile) {
         compile_this_and_related_files(compile->active_file);
     }
+}
+
+
+// -----------------------------------------------------------------------------
+//
+//
+// Other
+//
+//
+// -----------------------------------------------------------------------------
+// Selection Range Helper Functions
+namespace {
+
+/// Whether `loc` covers `pos`. The end is inclusive so that a cursor placed just after a
+/// node still selects it, which is what Shift+Alt+Right does at the end of a word.
+bool covers(const Loc& loc, const Loc::Pos& pos) {
+    if (pos.row < loc.begin.row || pos.row > loc.end.row) return false;
+    if (pos.row == loc.begin.row && pos.col < loc.begin.col) return false;
+    if (pos.row == loc.end.row && pos.col > loc.end.col) return false;
+    return true;
+}
+
+bool same_extent(const Loc& a, const Loc& b) {
+    return a.begin.row == b.begin.row && a.begin.col == b.begin.col
+        && a.end.row == b.end.row && a.end.col == b.end.col;
+}
+
+/// The AST spine at the cursor, outermost first. Nodes that do not cover the cursor are not
+/// descended into, so this visits one path rather than the whole program.
+std::vector<Loc> spine_at(const ast::ModDecl& program, const std::string& file, const Loc::Pos& pos) {
+    std::vector<Loc> spine;
+    ast::Node::TraverseFn collect([&](const ast::Node& node) {
+        const auto& loc = node.loc;
+        if (!loc.file || *loc.file != file || !covers(loc, pos)) return false;
+        // Many nodes wrap a child of exactly the same extent; a duplicate range would make
+        // the user press Shift+Alt+Right twice for one visible step.
+        if (spine.empty() || !same_extent(spine.back(), loc)) spine.push_back(loc);
+        return true;
+    });
+    for (auto& decl : program.decls) if (decl) decl->traverse(collect);
+    return spine;
+}
+
+} // anonymous namespace
+
+void Server::setup_events_selection_range() {
+    message_handler_.add<reqst::TextDocument_SelectionRange>([this](reqst::TextDocument_SelectionRange::Params&& params) -> reqst::TextDocument_SelectionRange::Result {
+        log_request("TextDocument SelectionRange", params.textDocument);
+
+        if (get_file_type(params.textDocument.uri.path()) != FileType::SourceFile) return nullptr;
+        ensure_compile(params.textDocument.uri.path());
+        if (!compile->program) return nullptr;
+        auto file = absolute_path(params.textDocument.uri.path()).generic_string();
+
+        lsp::Array<lsp::SelectionRange> result;
+        for (const auto& position : params.positions) {
+            auto spine = spine_at(*compile->program, file, to_loc(params.textDocument, position).begin);
+            if (spine.empty()) {
+                // Every position must get an answer, or the client cannot tell which one
+                // failed. An empty range at the cursor is the neutral reply.
+                result.push_back(lsp::SelectionRange{ .range = lsp::Range{ .start = position, .end = position } });
+                continue;
+            }
+
+            // Built outermost first, so each new node becomes the child of what came before.
+            lsp::SelectionRange range{ .range = to_range(spine.front()) };
+            for (size_t i = 1; i < spine.size(); ++i) {
+                range = lsp::SelectionRange{
+                    .range = to_range(spine[i]),
+                    .parent = std::make_unique<lsp::SelectionRange>(std::move(range))
+                };
+            }
+            result.push_back(std::move(range));
+        }
+
+        log::info("[LSP] >>> Returning {} selection ranges", result.size());
+        return result;
+    });
 }
 
 

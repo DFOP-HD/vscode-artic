@@ -21,6 +21,10 @@ template <typename T> using PtrVector = std::vector<Ptr<T>>;
 struct File {
     fs::path path;
     std::optional<std::string> text;
+    // Whether `text` is the editor's buffer rather than what `read()` found on disk.
+    // Only an editor buffer may hold unsaved edits, so only it has to be discarded when
+    // the document is closed.
+    bool text_from_editor = false;
     void read();
 
     explicit File(fs::path path) 
@@ -87,12 +91,22 @@ public:
 
     void reload();
 
-    void mark_file_dirty(const fs::path& file) {
-        if(auto f = tracked_file(file)) f->text = std::nullopt;
+    // Discards the editor's in-memory buffer, so the file is read from disk again.
+    // Returns whether there actually was an editor buffer to discard: content that came
+    // from disk is not stale and dropping it would force a pointless recompile.
+    bool discard_editor_buffer(const fs::path& file) {
+        auto f = tracked_file(file);
+        if(!f || !f->text_from_editor) return false;
+        f->text = std::nullopt;
+        f->text_from_editor = false;
+        return true;
     }
     
     void set_file_content(const fs::path& file, std::string&& content){
-        if(auto f = tracked_file(file)) f->text = std::move(content);
+        if(auto f = tracked_file(file)) {
+            f->text = std::move(content);
+            f->text_from_editor = true;
+        }
     }
 
     // Collect all files that belong to the project containing the given file

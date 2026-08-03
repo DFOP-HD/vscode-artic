@@ -445,16 +445,43 @@ is the reference for what else a server can advertise.
    with no identifier; it is named `"implicit"` and detailed with its type. Guarded by
    [test/document-symbols.test.mjs](test/document-symbols.test.mjs) against
    [test/fixtures/document-symbols/src/outline.art](test/fixtures/document-symbols/src/outline.art).
-10. **Document highlight, and fix `definition` on a declaration** — do these together.
-    `textDocument/definition` currently returns *all references* when the cursor sits on a
-    declaration; that is what documentHighlight and references are for, and it makes
-    Go-to-Definition behave unexpectedly. Definition on a declaration should return the
-    declaration itself, and `find_refs(decl)` filtered to the current file becomes
-    documentHighlight instead — so no capability is lost.
-11. **`didClose` is a no-op** — diagnostics for a file that is closed while still broken are
-    never cleared, and the file stays in the compile set.
-12. **Selection range** — Shift+Alt+Right. Walk the AST spine at the cursor and emit the
-    nested `Loc` ranges.
+10. **Document highlight, and fix `definition` on a declaration** — *done*. `definitionProvider`
+    used to answer with *all references* when the cursor sat on a declaration, so
+    Go-to-Definition on `fn scale` jumped into whichever file happened to call it. It now
+    returns the declaration itself, and `find_refs(decl)` became
+    `TextDocument_DocumentHighlight` instead, so no capability was lost. **Highlights are
+    filtered to the requested document**: the whole project is compiled at once, and a
+    range is only meaningful in the file it was asked for — without the filter the client
+    receives ranges that point into a different buffer. The declaration is reported as
+    `Write` and every reference as `Read`. Both handlers resolve the cursor through the
+    shared `decl_at()` helper in [artic-lsp/src/server.cpp](artic-lsp/src/server.cpp)
+    (`find_decl_at`, falling back to `find_ref_at` + `find_decl`), which hover, type
+    definition and highlight now share. Guarded by
+    [test/navigation.test.mjs](test/navigation.test.mjs).
+11. **`didClose` is a no-op** — *done*. The handler now withdraws the document's diagnostics
+    and discards the editor buffer it carried. **`File::text` alone does not mean "unsaved
+    edits"** — `File::read()` fills the very same field from disk and never clears it, so
+    the first attempt (`if (text) reset`) recompiled the project on every close and
+    republished the errors it had just withdrawn. `File::text_from_editor` in
+    [artic-lsp/include/workspace.h](artic-lsp/include/workspace.h) records the difference;
+    only `set_file_content()` sets it, and `Workspace::discard_editor_buffer()` reports
+    whether there was anything to drop. When there was, the project is recompiled from disk
+    **before** the diagnostics are withdrawn — other documents may have been reported broken
+    because of edits that no longer exist, and the recompile republishes for every file in
+    the project, including the one being closed. Guarded by
+    [test/did-close.test.mjs](test/did-close.test.mjs).
+12. **Selection range** — *done*. `TextDocument_SelectionRange` is registered in
+    `setup_events_selection_range()` and `selectionRangeProvider` is advertised.
+    `spine_at()` in [artic-lsp/src/server.cpp](artic-lsp/src/server.cpp) walks
+    `program->decls` with a `TraverseFn` that returns `false` for any node not covering the
+    cursor, so one path is visited rather than the whole program. Two details the LSP does
+    not spell out but clients depend on: **every requested position needs an answer**
+    (`params.positions` is plural, and a client lines the results up with its requests by
+    index), so a position no node covers still gets an empty range at the cursor; and
+    **consecutive ranges must differ**, because many nodes wrap a child of exactly the same
+    extent and a duplicate makes the user press Shift+Alt+Right twice for one visible step.
+    The chain is built outermost-first so each node becomes the `parent` of the previous.
+    Guarded by [test/navigation.test.mjs](test/navigation.test.mjs).
 13. **Signature help** — *done*. `TextDocument_SignatureHelp` is registered in
     `setup_events_signature_help()` and `signatureHelpProvider` is advertised with `(` and
     `,` as trigger characters. **The call site is found in the source text, not in the AST**:
@@ -475,8 +502,16 @@ is the reference for what else a server can advertise.
     highlight the *first* one, which is worse than sticking to the last. Guarded by
     [test/signature-help.test.mjs](test/signature-help.test.mjs) against
     [test/fixtures/signature-help/src/calls.art](test/fixtures/signature-help/src/calls.art).
-14. **Go to type definition** — `expr->type`, unwrapped through `TypeApp`, to the originating
-    `StructType` / `EnumType` declaration.
+14. **Go to type definition** — *done*. `TextDocument_TypeDefinition` is registered in
+    `setup_events_definitions()` and `typeDefinitionProvider` is advertised. The cursor is
+    resolved with `decl_at()`, and `declaring_type_decl()` in
+    [artic-lsp/src/server.cpp](artic-lsp/src/server.cpp) unwraps the type until a
+    user-written declaration is reached: `TypeApp` (a generic instantiation points at
+    `applied`), `AddrType` (both `PtrType` and `RefType`), `ArrayType` and
+    `ImplicitParamType`, then `StructType` / `EnumType` / `TypeAlias` / `TypeVar` /
+    `ModType`, each of which carries a `decl`. A primitive resolves to nothing and the
+    handler answers `null` rather than guessing. Guarded by
+    [test/navigation.test.mjs](test/navigation.test.mjs).
 15. **Go to implementation for implicits / `summon`** — jump from a summoned implicit to the
     instance the `Summoner` actually selected. Genuinely novel for Artic, and not obtainable
     from `NameMap` alone: the Summoner has to record its choice. That is a fork change and is

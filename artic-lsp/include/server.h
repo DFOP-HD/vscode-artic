@@ -35,6 +35,7 @@ private:
         setup_events_other();
         setup_events_completion();
         setup_events_signature_help();
+        setup_events_selection_range();
     }
     void setup_events_initialization();
     void setup_events_modifications();
@@ -42,6 +43,7 @@ private:
     void setup_events_definitions();
     void setup_events_completion();
     void setup_events_signature_help();
+    void setup_events_selection_range();
     void setup_events_other();
 
     void send_message(const std::string& message, lsp::MessageType type);

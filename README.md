@@ -16,9 +16,13 @@ non-technical problems.
 - Diagnostics (errors, warnings and hints) from the real lexer, parser, name binder and type checker
 - Hover: declaration signature and inferred type
 - Go to definition and find references
+- Go to type definition
+- Document highlight: every occurrence of the symbol under the cursor
 - Document symbols: outline view, breadcrumbs and Ctrl+Shift+O
+- Expand and shrink selection along the syntax tree (Shift+Alt+Right / Left)
 - Rename
 - Code completion for the symbols in scope
+- Signature help while typing a call
 - Inlay hints for inferred types
 - Semantic highlighting on top of the TextMate grammar
 - Snippets for loops, function declarations and other common constructs

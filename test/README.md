@@ -45,6 +45,8 @@ ctest --test-dir artic-lsp/buildGcc -E "^thorin_"
 | `signature-help.test.mjs` | `textDocument/signatureHelp`: the rendered label, the parameter spans inside it, the active parameter, and the half-written calls that never reach the AST. |
 | `hover.test.mjs` | `textDocument/hover`: the rendering of every declaration kind, the reported range, and the null cases. |
 | `document-symbols.test.mjs` | `textDocument/documentSymbol`: the outline tree, the symbol kind of each declaration kind, and the two ranges. |
+| `navigation.test.mjs` | `textDocument/definition` (on a declaration as well as a reference), `documentHighlight`, `typeDefinition` and `selectionRange`. |
+| `did-close.test.mjs` | `textDocument/didClose`: the closed document's diagnostics are withdrawn and its unsaved buffer is discarded. |
 | `path-identity.test.mjs` | The same features when the file is reached through a `.vcxproj` that spells the path differently from the editor. |
 | `sln-config.test.mjs` | `.sln` files listed in `include`, including the noise a CMake-generated solution brings with it. |
 | `ninja-config.test.mjs` | `build.ninja` files listed in `include`: artic targets become projects, other custom commands are ignored. |
@@ -62,6 +64,12 @@ edit config files and sources without dirtying the repository.
 `waitForDiagnostics(uri)` resolves when the server publishes diagnostics for a
 document. To assert something is *not* published, use `settle()` and then check
 `diagnosticsFor(uri)`.
+
+One action can publish for a document **more than once** — closing a file with
+unsaved edits recompiles the project first and withdraws the diagnostics after.
+`waitForDiagnostics()` resolves on the *first* of those and would assert against
+an intermediate state, so anything that reads a final value must `settle()` and
+then use `diagnosticsFor(uri)`, which holds the latest.
 
 URIs must be compared with `normalizeUri` (or via `diagnosticsFor`): the server
 emits VS Code's encoding (`file:///C%3A/...`) while Node produces `file:///C:/...`.

@@ -184,6 +184,18 @@ export class LspClient {
         this.notify('textDocument/didSave', { textDocument: { uri }, text });
     }
 
+    closeDocument(uri) {
+        this.notify('textDocument/didClose', { textDocument: { uri } });
+    }
+
+    /**
+     * Forgets every diagnostics notification received so far, so a later
+     * `waitForDiagnostics()` waits for a fresh one instead of replaying the log.
+     */
+    clearDiagnosticsLog() {
+        this.diagnosticsLog.length = 0;
+    }
+
     async stop() {
         try {
             await this.request('shutdown', null, { timeout: 3000 });

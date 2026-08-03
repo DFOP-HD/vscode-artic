@@ -1,0 +1,25 @@
+// Fixture: declarations whose references live in another file, so document highlight can
+// be checked for leaking occurrences across file boundaries.
+// Written for this repository - do not replace with code from other AnyDSL projects.
+
+struct Vec2 {
+    x: i32,
+    y: i32
+}
+
+enum Cell {
+    Empty,
+    Filled(Vec2)
+}
+
+static ORIGIN: Vec2 = Vec2 { x = 0, y = 0 };
+
+fn scale(v: Vec2, k: i32) -> Vec2 {
+    Vec2 { x = v.x * k, y = v.y * k }
+}
+
+fn norm(v: Vec2) -> i32 {
+    let dx = v.x;
+    let dy = v.y;
+    dx + dy
+}

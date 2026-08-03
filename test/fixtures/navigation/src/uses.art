@@ -1,0 +1,13 @@
+// Fixture: the reference side of shapes.art.
+// Written for this repository - do not replace with code from other AnyDSL projects.
+
+fn total() -> i32 {
+    let a = scale(ORIGIN, 2);
+    let b = scale(a, 3);
+    let c = Cell::Filled(b);
+    let n = norm(a) + norm(b);
+    match c {
+        Cell::Empty => n,
+        Cell::Filled(p) => n + norm(p)
+    }
+}
