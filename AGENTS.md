@@ -335,7 +335,8 @@ before applying:
 
 ## Backlog
 
-Ordered. Keep status markers current.
+Items 1–19 are done. They are kept because they record *why* things are the way they are;
+the forward plan is [Next up](#next-up). Keep status markers current.
 
 1. **Test harness** — *done*. Dependency-free LSP protocol tests + self-authored fixtures
    in `test/`, plus the artic CTest suite wired up via `include(CTest)`.
@@ -653,6 +654,120 @@ is the reference for what else a server can advertise.
     `Workspace::projects_of_config()` deliberately never parses anything: `configs_` is keyed
     by canonical path and a config nothing has opened yet simply yields no hints.
 
+### Next up
+
+Ordered by value. 20 and 21 are the two things a user actually notices; everything below
+them is hygiene.
+
+20. **Zero-config projects** — *not started, highest value*. Requiring a hand-written
+    `artic.json` before anything works is the first thing every new user hits, and today a
+    file with no config is compiled **alone and silently**: `Workspace::collect_project_files`
+    falls through to `{tracked_file(file)}`, so every cross-file reference becomes "unknown
+    identifier" with nothing saying why.
+
+    **What bounds this: artic has no import mechanism.** Files are concatenated on the
+    command line, there is no `#include`, and `use` only aliases a module that is already in
+    the program. So a project cannot be inferred from the source the way it can in Rust or
+    Cargo — that is precisely why a config exists, and no amount of cleverness in the server
+    will recover a file list from a single `.art` file. What *can* be recovered is the build
+    system's own answer.
+
+    Four strategies, strongest first. They stack; each is shippable on its own.
+
+    - **20a — detect build files server-side, in memory.** The C++ side can already *parse*
+      `.sln`, `build.ninja` and `.vcxproj` (`parse_sln`, `parse_ninja`, `parse_vcxproj` in
+      [artic-lsp/src/config.cpp](artic-lsp/src/config.cpp)). The only reasons a user must run
+      "Detect workspace configuration" and commit the result are that the *discovery* lives
+      in TypeScript ([vscode/src/detect.ts](vscode/src/detect.ts)) and that the *persistence*
+      is a file. Move the discovery: when `find_config_recursive` reaches the workspace root
+      without finding a config, scan the root with the same precedence `selectWorkspaceConfigFiles`
+      uses (`.sln` supersedes the projects it lists, `build.ninja` supersedes the projects
+      next to it) and instantiate those configs in memory. Every CMake- or MSBuild-driven
+      AnyDSL checkout then works with no file at all, and the build system stays the single
+      source of truth. The explicit command keeps its place for anyone who wants the result
+      pinned in the repo.
+      **Prerequisite: the server never learns the workspace root.** `reqst::Initialize` in
+      [artic-lsp/src/server.cpp](artic-lsp/src/server.cpp) reads only
+      `initializationOptions.restartFromCrash` and drops `rootUri`/`workspaceFolders` on the
+      floor. Capture them first.
+      The scan must be bounded — skip hidden and `node_modules`-style directories, cap the
+      depth, cap the number of files — and cached, because it runs on the miss path of every
+      file that has no config above it.
+    - **20b — an implicit project as the last resort.** With no config *and* no build file,
+      synthesise one project instead of falling back to a single file. Two candidate shapes,
+      and this needs a decision rather than a guess:
+      *whole workspace* (`**/*.art`, `**/*.impala` under the workspace root) is right for the
+      common case of one program per repository but produces redefinition errors in a
+      repository holding several independent programs; *nearest source root* (the open file's
+      directory plus its ancestors up to the workspace root) never merges two programs but
+      misses a sibling `lib/` directory. A third option is to start with the whole workspace
+      and fall back to per-directory grouping when the result reports redefinitions — more
+      forgiving, but the project a file lands in then depends on whether the workspace
+      happens to compile, which is hard to explain.
+    - **20c — say which project a file is in.** A status-bar item, or an
+      `artic.showProjectForFile` command, reporting the project name and where it came from
+      (config file, detected build file, implicit). Cheap, and without it 20a/20b are magic
+      that cannot be debugged. Arguably worth doing *first*, since it also makes the
+      existing config path easier to diagnose.
+    - **20d — globs from a setting.** `artic.include` / `artic.projectFiles` forwarded through
+      `initializationOptions`, so a user can point the server at sources without committing
+      anything. Lowest value of the four; only if 20a–20c leave a real gap.
+
+21. **Bounded parse-error recovery** — *not started*. The compiler is error-tolerant in the
+    sense that it keeps going, but not in the sense that it stays useful. Measured against
+    the current build: a file holding `fn a`, then `fn broken(x: i32) -> i32 { x +`, then
+    `fn b` and `fn c` produces **nine errors**, all but the first pointing at `fn b`, and
+    **`b` and `c` do not reach the AST at all**. In the editor that means the outline, hover,
+    completion and go-to-definition for everything below the line being typed disappear —
+    the exact situation [test/incomplete-code.test.mjs](test/incomplete-code.test.mjs) shows
+    the server surviving, but only because the break is at the *end* of the file.
+
+    Three amplifiers, each fixable on its own:
+    - **`Parser::expect()` consumes on mismatch.** It calls `next()` unconditionally
+      ([artic/include/artic/parser.h](artic/include/artic/parser.h)), so a missing token also
+      eats the token that would have resynchronised the parse — typically the `fn` starting
+      the next declaration. This is the single biggest amplifier and the smallest fix.
+    - **`parse_error_decl()` skips exactly one token**, so it re-reports on every token of
+      whatever follows. It needs panic-mode recovery: skip to the next token that can begin a
+      declaration (`fn struct enum type mod static implicit use #`) or to a closing brace at
+      the current nesting depth. `parse_error_expr()` wants the same, resynchronising on `;`
+      or `}`.
+    - **Nothing suppresses a cascade.** Report at most one parse error until the parser has
+      consumed a token successfully, as clang and rustc do. Whether the type checker needs
+      the same treatment once a node carries an `ErrorType` has to be measured — `check.cpp`
+      already carries fork error-tolerance changes.
+
+    **This is an upstreamable change, not an LSP-only one**, so it takes no `ENABLE_LSP`
+    guard — but it changes what the standalone compiler prints, so expect the `ctest` suite's
+    expected-output files to move. **Every such move is a review point, not a rubber stamp:**
+    a test that stops reporting an error it used to report is a regression, not a success.
+    Guard it by extending `incomplete-code.test.mjs` with cascade assertions — at most N
+    diagnostics for one broken construct, and the declarations *after* the break must still
+    appear in the outline. Written today, that test fails.
+
+    Sequencing: this lands in the same files as item 23, so either upstream that set first or
+    accept one larger PR.
+
+22. **React to files that change on disk** — *not started*. `Workspace_DidChangeWatchedFiles`
+    in [artic-lsp/src/server.cpp](artic-lsp/src/server.cpp) handles `Created` and `Deleted` by
+    reloading the whole workspace and ignores `Changed` entirely ("Handle elsewhere"), which
+    means the editor's own didOpen/didSave. So a `git checkout` that rewrites a source file,
+    or a build that regenerates `build.ninja`, leaves the server on stale projects until the
+    user happens to open the file. Item 20a makes this worse, because the build file becomes
+    the source of truth without ever being opened. Route `Changed` on a config or build file
+    to `on_config_changed`. The create/delete path is separately worth narrowing: it reloads
+    unconditionally — including the symbol index — for any watched file, and a build writing
+    into the tree will thrash it.
+
+23. **Upstream the upstreamable fork set** — *not started*. Open a PR against AnyDSL/artic
+    with the non-LSP fixes listed under
+    [Working with the artic/ submodule](#working-with-the-artic-submodule): the `err.stream`
+    fix, uninitialised `Loc::Pos` members, `is_pod` → `is_standard_layout && is_trivial`, the
+    lexer/parser/`ast.cpp`/`check.cpp` error tolerance, the `pop_scope` fix, `dump()` writing
+    to `log::err`, and the `loc.h` location format. The unmerged `origin/error-tolerance`
+    branch is prior art. The longer this waits the more expensive it gets — item 21 adds to
+    exactly this set.
+
 ### Deferred
 
 - **Doc comments** — the lexer discards `///`, so nothing can surface documentation in
@@ -661,8 +776,10 @@ is the reference for what else a server can advertise.
 - **Performance and protocol modernisation** — text sync is `Full` (the whole buffer on every
   keystroke), every change recompiles the entire project and rebuilds the `NameMap` from
   scratch, diagnostics are push-only, and there is no `$/progress` during a compile.
-  **No performance problem has actually been observed**, so this is not scheduled. Revisit
-  only if a change here is non-intrusive and carries no crash risk.
+  Now measured rather than assumed: [test/latency.test.mjs](test/latency.test.mjs) puts an
+  edit round trip at ~19 ms and every warm request at 1–3 ms on a ~360-declaration project.
+  Nothing here is worth doing until a real project makes those numbers move. Revisit only if
+  a change is non-intrusive and carries no crash risk.
 - **Minor gaps** — semantic tokens have no delta support and never emit the `deprecated` or
   `defaultLibrary` modifiers; call hierarchy is derivable from `references_of` plus an
   enclosing-function lookup; rename performs no collision, shadowing or valid-identifier
@@ -673,7 +790,8 @@ is the reference for what else a server can advertise.
   in [vscode/src/extension.ts](vscode/src/extension.ts) matches `language: 'json'`, so the file
   would also need a `jsonc` filename association to stop VS Code's own validator flagging them,
   and the selector would have to accept both languages or config diagnostics stop arriving.
-  Documented as a limitation in the README instead.
+  Documented as a limitation in the README instead. Item 20 lowers the value of this further:
+  the best config is the one nobody has to write.
 
 ### Parked — do not start without explicit approval
 
