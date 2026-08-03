@@ -70,10 +70,24 @@ stays at 145/145. Guarded by the *a break in the middle of a file* block in
 requires them to be at distinct positions, and asserts the declarations below the break are still
 in the outline and still reachable by go-to-definition.
 
-The type errors that follow a parse error are a **separate** amplifier and are only bounded, not
-fixed: a broken node still reaches the type checker and still produces "cannot infer type for
-expression". The total for the case above fell from 13 to 6 as a side effect of the parse
-recovering better, and the test holds that line.
+The type errors that follow a parse error were a **separate** amplifier, downstream of this one.
+An `ErrorExpr`, `ErrorType`, `ErrorDecl` or `ErrorPtrn` had no inference rule of its own, so it
+fell through to `Node::infer` and got "cannot infer type for expression" — a message about a node
+whose only problem had already been reported, and one that said "expression" even for a broken
+type or pattern. All four now infer to the error type in
+[artic/src/check.cpp](../artic/src/check.cpp), which is enough on its own: `should_report_error()`
+already suppresses any message about a type containing the error type, so the silence propagates
+outward without a flag having to be threaded anywhere. That is an inference rule the nodes were
+missing, not a suppression, so it is upstreamable and unguarded, and it moved no expected-output
+file either.
+
+The case above therefore went 13 diagnostics → 6 (parse recovery) → **4**. The one error left over
+the parser's own three is the *name binder*: `expected ';', but got 'cascade_b'` is followed by
+`unknown identifier 'cascade_b'`, because the parser mis-read the name of the next function as an
+identifier expression and the binder then resolved it honestly. Suppressing that would mean not
+binding names in a subtree that follows a parse error, and the binder is what fills `name_map` —
+i.e. it would cost go-to-definition exactly where the editor needs it most. Left alone
+deliberately.
 
 `ls::NameMap` ([artic/include/artic/name_map.h](../artic/include/artic/name_map.h)) is the index
 every navigation feature resolves through: `find_decl_at`, `find_ref_at`, `find_decl`, `find_refs`.
@@ -290,12 +304,46 @@ problem the user can act on, and named after a path that does not exist so no di
 be attributed to it. The projects reached through it are recorded in `detected_projects_`, which is
 the only reason `project_of_file()` can tell `DetectedBuildFile` apart from `Config`.
 
-**What is deliberately *not* done: inferring a project from a directory.** Measured against a real
-checkout, 70 of the 71 files in `artic/test/simple` compile cleanly on their own and produce 141
-redefinition errors when compiled together; roughly 550 of the 690 `.art`/`.impala` files in that
-checkout are independent single-file programs for which the single-file fallback is already the
-correct answer. Artic has no import mechanism, so a project cannot be recovered from the source —
-only from the build system. See the plan in [AGENTS.md](../AGENTS.md#plan) for the evidence.
+**What is deliberately *not* done: inferring a project from a directory, or from a glob in a
+setting.** Both were proposed and both were declined by the owner; the evidence is below so nobody
+proposes them a third time.
+
+**What bounds the whole question: artic has no import mechanism.** Files are concatenated on the
+command line, there is no `#include`, and `use` only aliases a module that is already in the
+program. So a project cannot be inferred from the source the way it can in Rust or Cargo — that is
+precisely why a config exists. What *can* be recovered is the build system's own answer, and that
+is what detection does.
+
+Measured against `D:/anydsl-metaproject`, 690 `.art`/`.impala` files outside the LLVM trees:
+
+| Tree | Files | Shape |
+| ---- | ----: | ----- |
+| `impala/test/**` | 395 | one independent program per file, many deliberately failing |
+| `artic/test/**` | 151 | same — `test/simple` and `test/failure` are 71 files each |
+| `stincilla/**` | 75 | combinatorial: one application × one mapping × one of 7 `backend_*.impala` |
+| `runtime/platforms/artic/**` | 39 | one library, listed file by file in `artic.json` |
+| `srl-cross-compile-toolchain/tests/src` | 16 | |
+| `spmv-benchmarks/artic-sources` | 12 | |
+| `artic-utils/artic` | 2 | library, depends on `runtime` |
+
+Two findings, both hard:
+
+- **A directory is not a project.** 70 of the 71 files in `artic/test/simple` compile cleanly on
+  their own; compiled together they produce **141 errors**, all redefinitions (`test`, `foo`, `E`,
+  …). The same holds for `impala/test/**`. That is ~550 of the 690 files, and for every one of them
+  **the single-file fallback is already the correct answer.**
+- **A real project is combinatorial, and only the build system knows the combination.**
+  `stincilla/` holds `jacobi.impala`, `gaussian.impala`, `bilateral.impala` and `matmul.impala`
+  side by side with seven mutually exclusive `backend_*.impala` and two mutually exclusive
+  `mapping_*.impala`. No directory rule can pick one of each; `stincilla/build/*.vcxproj` does.
+
+So neither *whole workspace* nor *nearest source root* is a safe implicit project — both are wrong
+for the two dominant layouts. The owner's own config (`D:/anydsl-metaproject/artic.json`) confirms
+it from the other side: it declares `runtime` and `artic-utils` as **explicit file lists** with a
+`folder` root and a dependency edge, includes `stincilla/build/jacobi.vcxproj` for the application,
+and gives everything else a `default-project` that just inherits the two libraries. A glob forwarded
+through `initializationOptions` was considered as an escape hatch and declined too: it is a config
+file with a worse name, and it cannot express the dependency edge that made the real config work.
 
 ---
 

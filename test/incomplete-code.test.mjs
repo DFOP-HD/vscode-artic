@@ -224,10 +224,13 @@ describe('a break in the middle of a file', () => {
     });
 
     test('does not let the type checker multiply the wreckage either', () => {
-        // The recovered parse feeds fewer broken nodes downstream, so the total falls with
-        // it. Bounded rather than exact: the type errors are not what this guards.
+        // A node the parser gave up on carries the error type, so the type checker reports
+        // nothing on it a second time. The one error left over the parser's own is the name
+        // binder resolving a token the parser mis-read as an identifier — see the notes.
         const errors = allErrors();
-        assert.ok(errors.length <= 6,
+        assert.deepEqual(errors.filter((e) => e.message.includes('cannot infer type')), [],
+            'a parse error must not turn into "cannot infer type"');
+        assert.ok(errors.length <= parseErrors().length + 1,
             `expected the whole cascade to stay bounded, got ${errors.length}:\n` +
             errors.map((e) => `  ${e.range.start.line + 1}: ${e.message}`).join('\n'));
     });

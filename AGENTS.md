@@ -301,8 +301,8 @@ ctest --test-dir artic-lsp/build-nolsp -E "^thorin_"
   `std::is_pod` → `is_standard_layout && is_trivial` fix in `hash.h` (`is_pod` is deprecated
   in C++20), lexer/parser/`ast.cpp` error tolerance, the bounded parse-error recovery in
   `parser.h`/`parser.cpp` (non-consuming `expect()`, `skip_to_decl()`, `reported_at()`), the
-  type-checker error tolerance in
-  `check.cpp`, the `pop_scope` warning fix, `Node::dump()`/`Type::dump()` writing to
+  type-checker error tolerance in `check.cpp` including the `infer` rule the four error nodes
+  were missing, the `pop_scope` warning fix, `Node::dump()`/`Type::dump()` writing to
   `log::err` instead of `log::out`, the `usage()` text in `main.cpp`, and the
   `file(row, col)` → `file:row:col` location format in `loc.h` (a separate, purely cosmetic
   change — terminal-clickable, but user-visible). The unmerged `origin/error-tolerance`
@@ -368,76 +368,17 @@ Only what is **not** done is tracked here. Everything already shipped is describ
 [docs/implementation-notes.md](docs/implementation-notes.md); if you want to know how a
 feature works, read that, not a changelog.
 
-Ordered by value. Item 1 is the thing a user actually notices; the rest is hygiene.
+Ordered by value. Item 1 is hygiene the owner benefits from; item 2 is the polish that is
+left.
 
-### 1. Zero-config projects — *1a–1c done; only the open question is left*
-
-A CMake- or MSBuild-driven checkout now works with no `artic.json`, and the status bar says
-which project a file is in — see
-[Zero-config projects](docs/implementation-notes.md#zero-config-projects). What remains is the
-case with no config *and* no build file, where the fallback is still a single-file compile.
-
-**What bounds this: artic has no import mechanism.** Files are concatenated on the command
-line, there is no `#include`, and `use` only aliases a module that is already in the program.
-So a project cannot be inferred from the source the way it can in Rust or Cargo — that is
-precisely why a config exists. What *can* be recovered is the build system's own answer, and
-that is what 1c does.
-
-#### Evidence from a real checkout
-
-Measured against `D:/anydsl-metaproject` (690 `.art`/`.impala` files outside the LLVM trees).
-**This is the reference any rule proposed for 1d must be justified against.**
-
-| Tree | Files | Shape |
-| ---- | ----: | ----- |
-| `impala/test/**` | 395 | one independent program per file, many deliberately failing |
-| `artic/test/**` | 151 | same — `test/simple` and `test/failure` are 71 files each |
-| `stincilla/**` | 75 | combinatorial: one application × one mapping × one of 7 `backend_*.impala` |
-| `runtime/platforms/artic/**` | 39 | one library, listed file by file in `artic.json` |
-| `srl-cross-compile-toolchain/tests/src` | 16 | |
-| `spmv-benchmarks/artic-sources` | 12 | |
-| `artic-utils/artic` | 2 | library, depends on `runtime` |
-
-Two findings, both hard:
-
-- **A directory is not a project.** 70 of the 71 files in `artic/test/simple` compile cleanly
-  on their own; compiled together they produce **141 errors**, all redefinitions (`test`,
-  `foo`, `E`, …). The same holds for `impala/test/**`. That is ~550 of the 690 files, and for
-  every one of them **the single-file fallback is already the correct answer.**
-- **A real project is combinatorial, and only the build system knows the combination.**
-  `stincilla/` holds `jacobi.impala`, `gaussian.impala`, `bilateral.impala` and `matmul.impala`
-  side by side with seven mutually exclusive `backend_*.impala` and two mutually exclusive
-  `mapping_*.impala`. No directory rule can pick one of each; `stincilla/build/*.vcxproj` does.
-
-So neither *whole workspace* nor *nearest source root* is a safe implicit project — both are
-wrong for the two dominant layouts. The owner's own config
-(`D:/anydsl-metaproject/artic.json`) confirms the same thing from the other side: it declares
-`runtime` and `artic-utils` as **explicit file lists** with a `folder` root and a dependency
-edge, includes `stincilla/build/jacobi.vcxproj` for the application, and gives everything else
-a `default-project` that just inherits the two libraries.
-
-#### The work
-
-*1a (capture the workspace root), 1b (say which project a file is in) and 1c (detect build
-files server-side) are done.*
-
-- **1d — a *narrow* implicit project, only where the evidence supports one.** With no config
-  and no build file, the fallback stays single-file unless a directory looks like one program.
-  Any rule here must be justified against the table above before it is written, and must be
-  able to *withdraw* — a rule that turns 71 clean files into 141 errors is worse than doing
-  nothing. Open question; do not implement without agreeing the rule first.
-- **1e — globs from a setting.** `artic.include` / `artic.projectFiles` forwarded through
-  `initializationOptions`, so a user can point the server at sources without committing
-  anything. Lowest value; only if 1d leaves a real gap.
-
-### 2. Upstream the upstreamable fork set — *not started*
+### 1. Upstream the upstreamable fork set — *not started*
 
 Open a PR against AnyDSL/artic with the non-LSP fixes listed under
 [Working with the artic/ submodule](#working-with-the-artic-submodule). The unmerged
 `origin/error-tolerance` branch is prior art. The longer this waits the more expensive it gets
 — the parse-error recovery added to exactly this set.
 
-### 3. Bound the *type* errors a parse error causes — *not started*
+### 2. Bound the *type* errors a parse error causes — *not started*
 
 Parse-error recovery is done (see
 [Recovering from a parse error](docs/implementation-notes.md#recovering-from-a-parse-error)):
