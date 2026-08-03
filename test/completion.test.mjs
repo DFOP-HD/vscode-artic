@@ -22,6 +22,17 @@ const withBody = (source, text) => {
     };
 };
 
+// Inserts `line` immediately above `fn main(`, and returns the position at its end.
+const withLineAboveMain = (source, line) => {
+    const lines = source.split('\n');
+    const at = lines.findIndex((l) => l.startsWith('fn main('));
+    assert.notEqual(at, -1, 'fixture must declare fn main');
+    return {
+        text: [...lines.slice(0, at), line, ...lines.slice(at)].join('\n'),
+        position: { line: at, character: line.length },
+    };
+};
+
 describe('completion', () => {
     let ws;
     let client;
@@ -30,6 +41,16 @@ describe('completion', () => {
 
     const completeWith = async (body) => {
         const { text, position } = withBody(source, body);
+        client.changeDocument(uri, text, Date.now());
+        await client.settle(300);
+        const result = await client.request('textDocument/completion', {
+            textDocument: { uri },
+            position,
+        });
+        return result?.items ?? result ?? [];
+    };
+
+    const completeAt = async ({ text, position }) => {
         client.changeDocument(uri, text, Date.now());
         await client.settle(300);
         const result = await client.request('textDocument/completion', {
@@ -77,5 +98,35 @@ describe('completion', () => {
         const identity = items.find((i) => i.label.startsWith('identity'));
         assert.ok(identity, 'generic function is offered');
         assert.equal(identity.detail, 'T');
+    });
+
+    test('does not offer a loop variable after the loop has ended', async () => {
+        // `for i in range(...)` desugars into a call taking a closure, so the loop variable
+        // lives in an FnExpr rather than in the block it visually belongs to. Walking the
+        // enclosing block used to reach it and offer `i` to the whole function body.
+        const items = await completeWith('    for i in range(0, 4) { let inner = i; }\n    ');
+        const labels = items.map((i) => i.label);
+        assert.ok(!labels.includes('i'), 'loop variable is out of scope here');
+        assert.ok(!labels.includes('inner'), 'the loop body binding is out of scope too');
+    });
+
+    test('offers a loop variable inside the loop', async () => {
+        const items = await completeWith('    for i in range(0, 4) { ');
+        assert.ok(items.map((i) => i.label).includes('i'), 'loop variable is in scope here');
+    });
+
+    test('does not offer a match arm binding outside the arm', async () => {
+        const items = await completeWith(
+            '    let s = Shape::Empty;\n'
+            + '    match s { Shape::Empty => 0, Shape::Dot(bound) => 1 };\n'
+            + '    ');
+        assert.ok(!items.map((i) => i.label).includes('bound'), 'arm binding is out of scope');
+    });
+
+    test('offers the members of a module behind a use path', async () => {
+        const items = await completeAt(withLineAboveMain(source, 'use shapes::'));
+        const labels = items.map((i) => i.label.replace(/[($].*$/, ''));
+        assert.ok(labels.includes('Circle'), 'the module struct is offered');
+        assert.ok(labels.includes('area'), 'the module function is offered');
     });
 });

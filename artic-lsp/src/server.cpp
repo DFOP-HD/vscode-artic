@@ -844,6 +844,19 @@ lsp::CompletionItemKind get_completion_kind(const ast::NamedDecl* decl) {
 bool same_file(const Loc& a, const Loc& b) { return a.file && b.file && *a.file == *b.file; }
 bool overlaps(const Loc& a, const Loc& b) { return a.end > /* important > */ b.begin && a.begin <= b.end; }
 
+/// The pattern a loop binds, or null when it binds none. `for x in gen(..)` is stored
+/// already desugared as `gen(|x| { .. })(..)`, so the loop variable is the parameter of a
+/// closure the source never spells out.
+const ast::Ptrn* loop_binding(const ast::LoopExpr& loop) {
+    if (const auto* while_expr = loop.isa<ast::WhileExpr>()) return while_expr->ptrn.get();
+    const auto* for_expr = loop.isa<ast::ForExpr>();
+    if (!for_expr || !for_expr->call || !for_expr->call->callee) return nullptr;
+    const auto* generator = for_expr->call->callee->isa<ast::CallExpr>();
+    if (!generator || !generator->arg) return nullptr;
+    const auto* lambda = generator->arg->isa<ast::FnExpr>();
+    return lambda ? lambda->param.get() : nullptr;
+}
+
 lsp::CompletionItem completion_item(const ast::FnDecl* fn) {
     lsp::CompletionItem item;
     item.insertTextFormat = lsp::InsertTextFormat::Snippet;
@@ -980,8 +993,15 @@ void Server::setup_events_completion() {
             } else if(const auto* mod = node.isa<ast::ModDecl>()){
                 current_module = mod;
             } else if(const auto* fn = node.isa<ast::FnDecl>()){
-                if(fn->fn->param) local_scopes.push_back(fn->fn->param.get());
                 if(fn->type_params) local_scopes.push_back(fn->type_params.get());
+            } else if(const auto* fn_expr = node.isa<ast::FnExpr>()){
+                // Covers a function's own parameters as well as the closure a `for x in ...`
+                // loop desugars into, whose parameter is the loop variable.
+                if(fn_expr->param) local_scopes.push_back(fn_expr->param.get());
+            } else if(const auto* case_expr = node.isa<ast::CaseExpr>()){
+                if(case_expr->ptrn) local_scopes.push_back(case_expr->ptrn.get());
+            } else if(const auto* loop = node.isa<ast::LoopExpr>()){
+                if(const auto* ptrn = loop_binding(*loop)) local_scopes.push_back(ptrn);
             } else if(const auto* block = node.isa<ast::BlockExpr>()){
                 local_scopes.push_back(block);
                 inside_block_expr = true;
@@ -1144,9 +1164,15 @@ void Server::setup_events_completion() {
         if (inside_block_expr){
             // Declarations in local scope
             ast::Node::TraverseFn collect_local_decls([&](const ast::Node& node) -> bool {
-                // TODO this shows for definitions outside the loop `for a in ...` -> shows `a`
-                if(collect_local_decls.depth > 0 && node.isa<ast::BlockExpr>()) {
-                    return false; // do not go into nested blocks
+                // Every scope that encloses the cursor is already a `local_scopes` entry of
+                // its own, so descending into a nested one either duplicates its bindings or
+                // offers bindings that are not visible from the cursor at all. `for a in ...`
+                // desugars into a call taking an `FnExpr`, which is why the loop variable used
+                // to be offered after the loop had ended.
+                if(collect_local_decls.depth > 0 &&
+                   (node.isa<ast::BlockExpr>() || node.isa<ast::FnExpr>() ||
+                    node.isa<ast::CaseExpr>() || node.isa<ast::LoopExpr>())) {
+                    return false;
                 }
                 if (const auto* named_decl = node.isa<ast::NamedDecl>(); 
                     named_decl && (!only_show_types || is_type_decl(*named_decl))

@@ -41,7 +41,7 @@ ctest --test-dir artic-lsp/buildGcc -E "^thorin_"
 | `source-diagnostics.test.mjs` | Diagnostics for `.art` sources: position, URI shape, attribution, clearing. |
 | `config-diagnostics.test.mjs` | Diagnostics for `artic.json` / `.artic-lsp`. |
 | `language-features.test.mjs` | Semantic tokens, type and parameter inlay hints, go-to-definition, find-references. |
-| `completion.test.mjs` | `textDocument/completion`: field and enum-option projection, and the `detail` of a generic function. |
+| `completion.test.mjs` | `textDocument/completion`: field and enum-option projection, the `detail` of a generic function, local-scope visibility, and module paths. |
 | `signature-help.test.mjs` | `textDocument/signatureHelp`: the rendered label, the parameter spans inside it, the active parameter, and the half-written calls that never reach the AST. |
 | `hover.test.mjs` | `textDocument/hover`: the rendering of every declaration kind, the reported range, and the null cases. |
 | `document-symbols.test.mjs` | `textDocument/documentSymbol`: the outline tree, the symbol kind of each declaration kind, and the two ranges. |

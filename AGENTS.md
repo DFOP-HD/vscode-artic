@@ -542,10 +542,27 @@ is the reference for what else a server can advertise.
     projection spelling the parameter's own name — `add(a, b)` gets no hints, which is what
     every other language server does. Guarded by
     [test/language-features.test.mjs](test/language-features.test.mjs).
-18. **Completion polish** — no resolve handler, no documentation, no `use`-path completion,
-    and the loop-variable bug marked `TODO` in
-    [artic-lsp/src/server.cpp](artic-lsp/src/server.cpp) (a `for a in ...` binding is offered
-    outside the loop). Real documentation depends on item 19.
+18. **Completion polish** — *done, with the rest reclassified*. The `TODO` in
+    [artic-lsp/src/server.cpp](artic-lsp/src/server.cpp) is fixed: a `for a in ...` binding
+    was offered for the whole enclosing function, and so was every `match` arm binding.
+    The default branch collects declarations by walking each `local_scopes` entry, and it
+    pruned only **nested `BlockExpr`s**, so any other scope-introducing node was walked in
+    full regardless of where the cursor was. It now prunes nested `FnExpr`, `CaseExpr` and
+    `LoopExpr` as well — every scope that encloses the cursor is a `local_scopes` entry in
+    its own right, so pruning loses nothing and descending only ever duplicates bindings or
+    invents ones that are out of scope.
+    **`ForExpr::traverse_children` bypasses the desugared closure**: it yields
+    `lambda->param`, `iter`, `call->arg` and `lambda->body` directly, so the `FnExpr` node is
+    never visited and pruning `FnExpr` alone does nothing for a `for` loop — `LoopExpr` has
+    to be pruned too. To keep the loop variable available *inside* the loop, the outer walk
+    now registers `loop_binding()` (which unwraps `for_expr->call->callee` → `CallExpr` →
+    `arg` → `FnExpr` → `param` with `isa`, never `as`) and a `CaseExpr`'s pattern as scopes,
+    and `FnExpr::param` replaces the old `FnDecl`-only parameter push.
+    `use`-path completion turned out to work already, through the same `ast::Path` branch as
+    `a::b`; it is now guarded rather than assumed. What is left — a resolve handler and item
+    documentation — has no content to serve until doc comments exist, and those are
+    **Deferred**, so nothing further is scheduled here.
+    Guarded by [test/completion.test.mjs](test/completion.test.mjs).
 19. **Project overview in the config file** — the config parser used to annotate `artic.json`
     with per-project information: which config declared each project, its own file count
     versus the count inherited from dependencies, and the resolved file list. Most of it was
