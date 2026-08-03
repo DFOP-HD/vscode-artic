@@ -2,6 +2,7 @@
 #define ARTIC_LS_CONFIG_H
 
 #include "workspace.h"
+#include "json_source.h"
 #include "paths.h"
 #include "text.h"
 #include <nlohmann/json.hpp>
@@ -43,8 +44,13 @@ struct ConfigLog {
 
         fs::path file;
         std::optional<Context> context;
+        // Where in `file` the message belongs, when that could be established while parsing.
+        // A message without one is placed by searching the file for `context`.
+        std::optional<lsp::Range> range;
     };
     fs::path file_context;
+    // Position index of the config currently being parsed, if it is a JSON one.
+    const JsonSource* json_context = nullptr;
     std::vector<Message> messages;
 
     // Config files this pass actually looked at. Configs are cached, so most passes
@@ -56,33 +62,56 @@ struct ConfigLog {
     // includes, so a plain assignment would leave later messages attributed to
     // whichever config happened to be visited last.
     struct FileContextScope {
-        FileContextScope(ConfigLog& log, fs::path file)
-            : log_(log), previous_(std::move(log.file_context))
+        FileContextScope(ConfigLog& log, fs::path file, const JsonSource* source)
+            : log_(log), previous_(std::move(log.file_context)), previous_json_(log.json_context)
         {
             log_.evaluated_files.insert(file);
             log_.file_context = std::move(file);
+            log_.json_context = source;
         }
         FileContextScope(const FileContextScope&) = delete;
         FileContextScope& operator=(const FileContextScope&) = delete;
-        ~FileContextScope() { log_.file_context = std::move(previous_); }
+        ~FileContextScope() {
+            log_.file_context = std::move(previous_);
+            log_.json_context = previous_json_;
+        }
     private:
         ConfigLog& log_;
         fs::path previous_;
+        const JsonSource* previous_json_;
     };
-    [[nodiscard]] FileContextScope scoped_file(fs::path file) { return FileContextScope(*this, std::move(file)); }
+    [[nodiscard]] FileContextScope scoped_file(fs::path file, const JsonSource* source = nullptr) {
+        return FileContextScope(*this, std::move(file), source);
+    }
 
     void error(std::string msg, std::string context="") { messages.push_back(make_message(Severity::Error,       std::move(msg), context)); }
     void warn (std::string msg, std::string context="") { messages.push_back(make_message(Severity::Warning,     std::move(msg), context)); }
     void info (std::string msg, std::string context="") { messages.push_back(make_message(Severity::Information, std::move(msg), context)); }
 
+    // The same, for a message that knows which part of the JSON document it is about. The
+    // literal is still recorded: the pointer is resolved against the text as parsed, and a
+    // config parsed before an edit would otherwise place the message nowhere.
+    void error_at(const std::string& ptr, std::string msg, std::string context="") { messages.push_back(make_message(Severity::Error,   std::move(msg), context, ptr)); }
+    void warn_at (const std::string& ptr, std::string msg, std::string context="") { messages.push_back(make_message(Severity::Warning, std::move(msg), context, ptr)); }
+
+    // A message whose position is already known, such as a JSON syntax error.
+    void error_at_range(lsp::Range range, std::string msg) {
+        auto m = make_message(Severity::Error, std::move(msg), "");
+        m.range = range;
+        messages.push_back(std::move(m));
+    }
+
 private:
-    Message make_message(Severity s, std::string msg, std::string context) {
-        return Message{
+    Message make_message(Severity s, std::string msg, const std::string& context, const std::string& pointer = {}) {
+        Message m{
             .message = std::move(msg),
             .severity = s,
-            .file = file_context, 
-            .context = context.empty() ? std::nullopt : std::make_optional(Context{.literal=text::quote(context)})
+            .file = file_context,
+            .context = context.empty() ? std::nullopt : std::make_optional(Context{.literal=text::quote(context)}),
+            .range = std::nullopt,
         };
+        if (!pointer.empty() && json_context) m.range = json_context->range(pointer);
+        return m;
     }
 };
 
@@ -99,8 +128,8 @@ struct ConfigParser {
 
     bool parse();
 private:
-    std::optional<Project> parse_project(const nlohmann::json& pj);
-    std::unordered_set<fs::path> evaluate_patterns(Project& project);
+    std::optional<Project> parse_project(const nlohmann::json& pj, const std::string& pointer);
+    std::unordered_set<fs::path> evaluate_patterns(Project& project, const std::string& pointer_prefix);
 };
 
 
@@ -108,14 +137,14 @@ private:
 // The pattern is interpreted with '/' as the separator and can include
 // *, **, ? as described.
 struct FilePatternParser {
-    FilePatternParser(fs::path root, std::string pattern, config::ConfigLog& log)
-        : root(std::move(root)), pattern(std::move(pattern)), log(log)
+    FilePatternParser(fs::path root, std::string pattern, config::ConfigLog& log, std::string pointer = {})
+        : root(std::move(root)), pattern(std::move(pattern)), log(log), pointer(std::move(pointer))
     {
         expand();
     }
 
-    static std::vector<fs::path> expand(const fs::path& root, const std::string& pattern, config::ConfigLog& log) {
-        return FilePatternParser(root, pattern, log).results;
+    static std::vector<fs::path> expand(const fs::path& root, const std::string& pattern, config::ConfigLog& log, const std::string& pointer = {}) {
+        return FilePatternParser(root, pattern, log, pointer).results;
     }
 
     std::vector<fs::path> results;
@@ -129,6 +158,7 @@ private:
     fs::path root;
     std::string pattern;
     config::ConfigLog& log;
+    std::string pointer;
 
     // State
     std::vector<std::string> parts;

@@ -31,6 +31,7 @@ one of the utility modules, so a handler stays readable:
 | `lsp_convert.h` / `.cpp` | `artic::ls` | Conversions between artic's `Loc`/`Severity`/`Diagnostic` and the `lsp::` protocol types, plus `contains(range, position)`. |
 | `ast_render.h` / `.cpp` | `artic::ls` | Turning AST nodes into display strings: `print_to_string`, `print_param_list`, `render_decl`, and the `symbol_kind_of` mapping. Hover, document symbols, workspace symbols, code lens and completion all render through here so they cannot disagree. |
 | `symbol_index.{h,cpp}` | `artic::ls` | The parse-only, per-project declaration index behind `workspace/symbol`. |
+| `json_source.{h,cpp}` | `artic::ls` | Indexes a JSON document by RFC 6901 pointer so a config diagnostic or hint can point at the value it is about. nlohmann/json discards positions and cannot be configured to keep them. |
 | `workspace.{h,cpp}` | `artic::ls::workspace` | Config discovery, the project registry, file tracking. |
 | `config.{h,cpp}` | `artic::ls::config` | Parsing `artic.json`, `.artic-lsp`, `.vcxproj`, `.sln`, `build.ninja`, the bounded workspace scan behind zero-config projects, and `ConfigLog`. |
 | `compile.{h,cpp}` | `artic::ls` | Driving `libartic` and holding the resulting AST, `Locator` and `NameMap`. |
@@ -494,9 +495,9 @@ Open a PR against AnyDSL/artic with the non-LSP fixes listed under
 - **Minor gaps** — semantic tokens have no delta support and never emit the `deprecated` or
   `defaultLibrary` modifiers; call hierarchy is derivable from `references_of` plus an
   enclosing-function lookup; rename performs no collision, shadowing or valid-identifier check.
-- **Comments in `artic.json`** — the config is read with `is >> j`, i.e. nlohmann's defaults, so
-  `//` is a parse error. The README examples were written with comments for years and were
-  therefore not copy-pasteable. Enabling `ignore_comments` is one line, but the document
+- **Comments in `artic.json`** — the config is read with `nlohmann::json::parse`, i.e. nlohmann's
+  defaults, so `//` is a parse error. The README examples were written with comments for years and
+  were therefore not copy-pasteable. Enabling `ignore_comments` is one line, but the document
   selector in [vscode/src/extension.ts](vscode/src/extension.ts) matches `language: 'json'`, so
   the file would also need a `jsonc` filename association to stop VS Code's own validator
   flagging them, and the selector would have to accept both languages or config diagnostics

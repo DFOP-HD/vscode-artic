@@ -41,6 +41,7 @@ ctest --test-dir artic-lsp/buildGcc -E "^thorin_"
 | `source-diagnostics.test.mjs` | Diagnostics for `.art` sources: position, URI shape, attribution, clearing. |
 | `config-diagnostics.test.mjs` | Diagnostics for `artic.json` / `.artic-lsp`. |
 | `config-hints.test.mjs` | Inlay hints on `artic.json`: per-project and per-pattern file counts, and that a healthy config stays out of the Problems panel. |
+| `config-positions.test.mjs` | Where a config diagnostic or hint lands when the value it is about occurs more than once in the document, and where a JSON syntax error lands. |
 | `language-features.test.mjs` | Semantic tokens, type and parameter inlay hints, go-to-definition, find-references. |
 | `completion.test.mjs` | `textDocument/completion`: field and enum-option projection, the `detail` of a generic function, local-scope visibility, and module paths. |
 | `signature-help.test.mjs` | `textDocument/signatureHelp`: the rendered label, the parameter spans inside it, the active parameter, and the half-written calls that never reach the AST. |
@@ -94,9 +95,10 @@ project name with a warning. Tests in the same suite that stage different
 workspaces must therefore use distinct project names, or the second workspace's
 projects silently do not exist.
 
-A config diagnostic is published at **every** textual occurrence of its context
-string in the file, so one logical error can produce several diagnostics. Compare
-distinct messages rather than counting entries.
+A config diagnostic parsed out of a JSON document is published **once**, at the
+exact value it is about. Only a message from a build file, which has no position
+index, falls back to a text search and can therefore appear at several textually
+identical strings.
 
 ### Testing against code that does not compile
 

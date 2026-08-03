@@ -34,6 +34,7 @@ add_executable(artic-lsp
     include/compile.h
     include/config.h
     include/crash.h
+    include/json_source.h
     include/lsp_convert.h
     include/paths.h
     include/server.h
@@ -46,6 +47,7 @@ add_executable(artic-lsp
     src/crash.cpp
     src/compile.cpp
     src/config.cpp
+    src/json_source.cpp
     src/lsp_convert.cpp
     src/paths.cpp
     src/symbol_index.cpp

@@ -45,11 +45,17 @@ struct Project {
         size_t matched = 0;
         size_t changed = 0;
         bool excludes = false;
+        // RFC 6901 pointer to the pattern in `origin`, so the hint lands on the right one
+        // when two projects share a pattern. Empty for a project taken from a build file.
+        std::string pointer;
     };
 
     // Unique project name
     // May be referenced by other projects
     Identifier name;
+
+    // RFC 6901 pointer to the name in `origin`. Empty for a project taken from a build file.
+    std::string name_pointer;
 
     // Path to the project root directory
     // FilePatterns are relative to this path

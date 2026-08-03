@@ -138,11 +138,35 @@ a fresh checkout.
 
 Two things this needs. **The counts cannot be recomputed on demand** — patterns are expanded once
 and the resulting `ConfigFile` is cached, so `evaluate_patterns()` records them on
-`Project::pattern_matches` as it goes. And **there is no position information in a parsed config**
-(it is plain nlohmann JSON), so `ConfigDocument` in
-[artic-lsp/src/server.cpp](../artic-lsp/src/server.cpp) locates each literal by scanning the file
-and marks every occurrence it has used, so two projects sharing a `files` pattern each get their
-own hint instead of both landing on the first line.
+`Project::pattern_matches` as it goes. And **a value has to be findable in the document again**,
+which is what `JsonSource` is for.
+
+#### Getting back to where a value was written
+
+**nlohmann/json keeps no source information, and there is no option that makes it.** A parsed
+value cannot say which line it came from; `parser_callback_t` reports only depth and event type,
+and the SAX interface passes a position to `parse_error()` alone. Both the diagnostics and the
+hints therefore used to locate a value by searching the document text for it — which reports
+*every* textually identical string:
+
+- A project named after the folder it lives in (`"name": "lib", "folder": "lib"`) produced **two**
+  identical "folder does not exist" diagnostics, one of them on the perfectly correct name.
+- A project referenced as a dependency before it is declared had its file-count hint placed on the
+  reference, because that occurrence comes first in the file.
+- A syntax error had no context at all and landed at `0:0`.
+
+[artic-lsp/src/json_source.cpp](../artic-lsp/src/json_source.cpp) scans the document a second time
+and indexes it by RFC 6901 pointer (`/projects/0/files/2`), spanning each value together with its
+member name so `"folder": "src"` is reported rather than a bare `"src"`. `ConfigParser` builds one
+per config and hands it to `ConfigLog::scoped_file()`, so `log.error_at(pointer, ...)` resolves to
+a `lsp::Range` **while the text that produced it is still in hand** — a config edited after being
+parsed cannot move a message onto the wrong line. `Project::name_pointer` and
+`PatternMatch::pointer` carry the same information through to the inlay hints.
+
+The scanner is deliberately tolerant and never reports an error: nlohmann is the authority on
+whether the document is valid, and this pass has to survive the invalid one so that
+`position_of_byte(parse_error::byte)` can place the syntax error. Text search is kept as the
+fallback, for build files (which have no index) and for a pointer that no longer resolves.
 `Workspace::projects_of_config()` never parses anything: `configs_` is keyed by canonical path, so
 a config nothing has opened yet simply yields no hints.
 

@@ -4,6 +4,7 @@
 #include "compile.h"
 #include "config.h"
 #include "crash.h"
+#include "json_source.h"
 #include "lsp_convert.h"
 #include "paths.h"
 #include "workspace.h"
@@ -1659,6 +1660,11 @@ void Server::ensure_compile(std::string_view file_view) {
 void Server::publish_config_diagnostics(const workspace::config::ConfigLog& log) {
     std::unordered_map<std::filesystem::path, std::vector<lsp::Diagnostic>> fileDiags;
 
+    // Fallback for a message that carries no range: build-file parsers have no position
+    // information at all, and a JSON pointer resolved against a config that has since been
+    // edited may no longer exist. Searching the text finds every textual occurrence, so one
+    // logical error can produce several diagnostics -- which is exactly why anything parsed
+    // out of a JSON config carries a range instead.
     auto find_in_file = [](std::filesystem::path const& file, std::string_view literal) -> std::vector<lsp::Range> {
         std::vector<lsp::Range> ranges;
         if(literal.empty()) return ranges;
@@ -1692,6 +1698,12 @@ void Server::publish_config_diagnostics(const workspace::config::ConfigLog& log)
         diag.message = msg.message;
         diag.severity = msg.severity;
         diag.range = lsp::Range{ lsp::Position{0,0}, lsp::Position{0,0} };
+
+        if (msg.range) {
+            diag.range = *msg.range;
+            fileDiags[msg.file].push_back(std::move(diag));
+            continue;
+        }
 
         auto occurrences = msg.context.has_value()
             ? find_in_file(msg.file, msg.context.value().literal)
@@ -1930,13 +1942,17 @@ void collect_parameter_hints(
     for (const auto& decl : program.decls) if (decl) decl->traverse(visit);
 }
 
-/// A config document, scanned for the string literals a project is described by. There is no
-/// position information in the parsed config - it is plain nlohmann JSON - so a hint is
-/// placed by finding the literal it belongs to, exactly as config diagnostics are.
+/// A config document, scanned for the string literals a project is described by.
+///
+/// A hint is placed by resolving the JSON pointer the parser recorded for the value, which
+/// is exact. Text search is kept only for a project that came from a build file, where
+/// there is no pointer: two projects may well share a `files` pattern, so an occurrence is
+/// annotated at most once.
 class ConfigDocument {
 public:
     explicit ConfigDocument(const fs::path& file) {
         if (auto text = paths::read_file(file)) {
+            source_ = JsonSource::scan(*text);
             std::istringstream is(*text);
             for (std::string line; std::getline(is, line); ) lines_.push_back(std::move(line));
         }
@@ -1944,9 +1960,12 @@ public:
 
     bool empty() const { return lines_.empty(); }
 
-    /// End position of the next occurrence of `"value"` that has not been annotated yet.
-    /// Two projects may well share a `files` pattern, and each deserves its own hint.
-    std::optional<lsp::Position> take(const std::string& value) {
+    /// End position of the value at `pointer`, or of the next unannotated occurrence of
+    /// `"value"` when the pointer does not resolve.
+    std::optional<lsp::Position> take(const std::string& pointer, const std::string& value) {
+        if (!pointer.empty()) {
+            if (auto range = source_.range(pointer)) return range->end;
+        }
         auto quoted = text::quote(value);
         for (lsp::uint row = 0; row < lines_.size(); ++row) {
             const auto& line = lines_[row];
@@ -1959,6 +1978,7 @@ public:
     }
 
 private:
+    JsonSource source_;
     std::vector<std::string> lines_;
     std::set<std::pair<lsp::uint, size_t>> used_;
 };
@@ -1991,7 +2011,7 @@ void collect_config_hints(
         auto total = workspace.total_file_count(*project);
         std::string label = file_count(own);
         if (total != own) label += ", " + std::to_string(total) + " with dependencies";
-        add(doc.take(project->name), std::move(label));
+        add(doc.take(project->name_pointer, project->name), std::move(label));
 
         for (const auto& match : project->pattern_matches) {
             std::string pattern_label = match.excludes
@@ -1999,7 +2019,7 @@ void collect_config_hints(
                 : file_count(match.changed);
             if (match.matched != match.changed)
                 pattern_label += " of " + std::to_string(match.matched) + " matched";
-            add(doc.take(match.pattern), std::move(pattern_label));
+            add(doc.take(match.pointer, match.pattern), std::move(pattern_label));
         }
     }
 }
