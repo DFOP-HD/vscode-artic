@@ -375,14 +375,113 @@ void FilePatternParser::dfs(size_t idx,const fs::path& base){
 };
 
 
+namespace {
+
+using text::to_lower;
+using text::split_whitespace;
+using text::split_command_line;
+using text::trim_left;
+
+// Ninja escapes `$`, `:`, space and newline with a leading `$` inside build statements.
+std::string ninja_unescape(std::string_view in) {
+    std::string out;
+    out.reserve(in.size());
+    for (size_t i = 0; i < in.size(); ++i) {
+        if (in[i] == '$' && i + 1 < in.size()) ++i;
+        out.push_back(in[i]);
+    }
+    return out;
+}
+
+// A token is a path spelled by a build system, so it may use either separator regardless
+// of the platform we are parsing it on. fs::path only recognises the native one.
+std::string_view base_name(std::string_view path) {
+    auto pos = path.find_last_of("/\\");
+    return pos == std::string_view::npos ? path : path.substr(pos + 1);
+}
+
+std::string extension_of(std::string_view path) {
+    auto name = base_name(path);
+    auto dot = name.rfind('.');
+    return dot == std::string_view::npos || dot == 0 ? std::string{} : to_lower(std::string(name.substr(dot)));
+}
+
+bool is_artic_executable(std::string_view token) {
+    auto name = base_name(token);
+    auto ext = extension_of(token);
+    auto stem = name.substr(0, name.size() - ext.size());
+    return to_lower(std::string(stem)) == "artic" && (ext.empty() || ext == ".exe");
+}
+
+bool is_artic_source(std::string_view token) {
+    auto ext = extension_of(token);
+    return ext == ".art" || ext == ".impala";
+}
+
+// Generated commands are usually `<shell> /C "<real command>"`, which wraps everything in
+// one pair of quotes. Left in place, a quote-aware split returns the whole command as a
+// single token, so the wrapper has to come off before the command can be tokenised.
+std::string_view unwrap_shell_command(std::string_view command) {
+    for (size_t pos = 0; pos < command.size();) {
+        auto end = command.find(' ', pos);
+        auto token = command.substr(pos, end == std::string_view::npos ? end : end - pos);
+        if (token == "/C" || token == "/c" || token == "-c") {
+            auto body = trim_left(command.substr(end == std::string_view::npos ? command.size() : end));
+            while (!body.empty() && (body.back() == ' ' || body.back() == '\t')) body.remove_suffix(1);
+            // Only a fully quoted remainder is a wrapper; anything else is a real argument.
+            if (body.size() >= 2 && body.front() == '"' && body.back() == '"')
+                return body.substr(1, body.size() - 2);
+            return command;
+        }
+        if (end == std::string_view::npos) break;
+        pos = command.find_first_not_of(' ', end);
+        if (pos == std::string_view::npos) break;
+    }
+    return command;
+}
+
+// A <Command> element holds a shell command with the XML markup still around it. Tags are
+// dropped first so `&lt;` in the command itself is not mistaken for one.
+std::string xml_text(std::string_view line) {
+    std::string out;
+    out.reserve(line.size());
+    for (size_t i = 0; i < line.size(); ++i) {
+        if (line[i] == '<') {
+            auto close = line.find('>', i);
+            if (close == std::string_view::npos) break;
+            i = close;
+            out.push_back(' ');
+            continue;
+        }
+        if (line[i] == '&') {
+            auto semi = line.find(';', i);
+            if (semi != std::string_view::npos && semi - i <= 5) {
+                auto entity = line.substr(i + 1, semi - i - 1);
+                if (entity == "quot")      { out.push_back('"');  i = semi; continue; }
+                else if (entity == "apos") { out.push_back('\''); i = semi; continue; }
+                else if (entity == "lt")   { out.push_back('<');  i = semi; continue; }
+                else if (entity == "gt")   { out.push_back('>');  i = semi; continue; }
+                else if (entity == "amp")  { out.push_back('&');  i = semi; continue; }
+            }
+        }
+        out.push_back(line[i]);
+    }
+    return out;
+}
+
+} // anonymous namespace
+
 std::optional<Project> parse_vcxproj(const ConfigPath& origin, ConfigLog& log) {
     log::info("Parsing vcxproj config file: {}", origin.path.generic_string());
-    /* 
-    Need to parse "artic.exe path/to/file_1 path/to/file_2 ... path/to/file_n --your_artic_args ..."
-    1. find string "artic.exe " in the vcxproj file (there may be multiple, but we will just take the first one for now)
-    2. collect all file paths that appear after "artic.exe " and before " --" (if present) or end of line
-     - these file paths may be relative to the vcxproj file location, so we need to resolve them to absolute paths
-     - we can ignore any arguments after " --"
+    /*
+    A custom build step holds the compiler invocation inside a <Command> element:
+
+        <Command>setlocal
+        "C:\My Tools\artic.exe" src\a.art "src\b c.art" -emit-llvm -o out.ll
+
+    The first artic invocation wins. Everything between the executable and the first
+    option is an input, resolved relative to the .vcxproj. The command is a shell command
+    line, so a path containing spaces is quoted and must survive tokenisation intact.
     */
     std::ifstream is(origin.path);
     if (!is) {
@@ -391,30 +490,25 @@ std::optional<Project> parse_vcxproj(const ConfigPath& origin, ConfigLog& log) {
     }
     std::string line;
     while (std::getline(is, line)) {
-        auto find_str = "artic.exe ";
-        auto pos = line.find(find_str);
-        if (pos != std::string::npos) {
-            pos += strlen(find_str);
-            auto end_pos = line.find(" --", pos);
-            if (end_pos == std::string::npos) end_pos = line.size();
-            std::string files_str = line.substr(pos, end_pos - pos);
-            std::istringstream ss(files_str);
-            std::vector<fs::path> files;
-            std::string file;
-            while (ss >> file) {
-                auto abs_path = paths::to_absolute_path(origin.path.parent_path(), paths::from_msbuild_path(file));
-                files.push_back(abs_path);
-            }
-            if (!files.empty()) {
-                Project p;
-                p.name = origin.path.stem().generic_string();
-                p.root_dir = origin.path.parent_path();
-                p.files = files;
-                p.origin = origin.path;
-                log::info("Found project '{}' ({} files) in vcxproj config file: {}", p.name, p.files.size(), origin.path.generic_string());
-                return p;
-            }
+        auto command = xml_text(line);
+        auto tokens = split_command_line(unwrap_shell_command(command));
+        auto exe = std::find_if(tokens.begin(), tokens.end(), is_artic_executable);
+        if (exe == tokens.end()) continue;
+
+        std::vector<fs::path> files;
+        for (auto it = exe + 1; it != tokens.end() && !it->starts_with("-"); ++it) {
+            if (!is_artic_source(*it)) continue;
+            files.push_back(paths::to_absolute_path(origin.path.parent_path(), paths::from_msbuild_path(*it)));
         }
+        if (files.empty()) continue;
+
+        Project p;
+        p.name = origin.path.stem().generic_string();
+        p.root_dir = origin.path.parent_path();
+        p.files = std::move(files);
+        p.origin = origin.path;
+        log::info("Found project '{}' ({} files) in vcxproj config file: {}", p.name, p.files.size(), origin.path.generic_string());
+        return p;
     }
     return std::nullopt;
 }
@@ -472,37 +566,6 @@ std::vector<ConfigPath> parse_sln(const ConfigPath& origin, ConfigLog& log) {
     return projects;
 }
 
-namespace {
-
-using text::to_lower;
-using text::split_whitespace;
-using text::strip_quotes;
-using text::trim_left;
-
-// Ninja escapes `$`, `:`, space and newline with a leading `$` inside build statements.
-std::string ninja_unescape(std::string_view in) {
-    std::string out;
-    out.reserve(in.size());
-    for (size_t i = 0; i < in.size(); ++i) {
-        if (in[i] == '$' && i + 1 < in.size()) ++i;
-        out.push_back(in[i]);
-    }
-    return out;
-}
-
-bool is_artic_executable(std::string_view token) {
-    fs::path p(token);
-    auto ext = to_lower(p.extension().string());
-    return to_lower(p.stem().string()) == "artic" && (ext.empty() || ext == ".exe");
-}
-
-bool is_artic_source(std::string_view token) {
-    auto ext = to_lower(fs::path(token).extension().string());
-    return ext == ".art" || ext == ".impala";
-}
-
-} // anonymous namespace
-
 std::vector<Project> parse_ninja(const ConfigPath& origin, ConfigLog& log) {
     /*
     CMake writes one block per generated file:
@@ -512,7 +575,8 @@ std::vector<Project> parse_ninja(const ConfigPath& origin, ConfigLog& log) {
 
     The build statement names the target, the COMMAND line names the sources. Everything
     up to the first option is an input; the `cd` (if any) is what relative paths are
-    relative to. Paths containing spaces are not supported, exactly as in .vcxproj files.
+    relative to. The command is quoted where it has to be, so it is tokenised as a shell
+    would: a quoted path containing spaces stays one token.
     */
     std::ifstream is(origin.path);
     if (!is) {
@@ -551,7 +615,7 @@ std::vector<Project> parse_ninja(const ConfigPath& origin, ConfigLog& log) {
 
         auto trimmed = trim_left(sv);
         if (!trimmed.starts_with("COMMAND = ") || target.empty()) continue;
-        auto command = trimmed.substr(strlen("COMMAND = "));
+        auto command = unwrap_shell_command(trimmed.substr(strlen("COMMAND = ")));
 
         fs::path cwd = origin.path.parent_path();
         std::vector<fs::path> files;
@@ -560,8 +624,7 @@ std::vector<Project> parse_ninja(const ConfigPath& origin, ConfigLog& log) {
             auto segment = command.substr(pos, next == std::string_view::npos ? std::string_view::npos : next - pos);
             pos = next == std::string_view::npos ? command.size() + 1 : next + 4;
 
-            auto tokens = split_whitespace(segment);
-            for (auto& token : tokens) token = std::string(strip_quotes(token));
+            auto tokens = split_command_line(segment);
 
             if (auto it = std::find(tokens.begin(), tokens.end(), "cd"); it != tokens.end()) {
                 if (++it != tokens.end() && to_lower(*it) == "/d") ++it;

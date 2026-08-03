@@ -55,6 +55,7 @@ ctest --test-dir artic-lsp/buildGcc -E "^thorin_"
 | `sln-config.test.mjs` | `.sln` files listed in `include`, including the noise a CMake-generated solution brings with it. |
 | `ninja-config.test.mjs` | `build.ninja` files listed in `include`: artic targets become projects, other custom commands are ignored. |
 | `optional-includes.test.mjs` | Includes marked with a trailing `?`: absent is fine, broken is not, and the `?` is not part of the path. |
+| `paths-with-spaces.test.mjs` | Build commands that quote a source path containing a space, in both `build.ninja` and `.vcxproj`, including the `cmd.exe /C "..."` wrapper and XML-escaped quotes. |
 | `circular-dependencies.test.mjs` | Cycles between projects are reported once and then broken, so the projects still compile. |
 | `project-provenance.test.mjs` | The `artic.projectForFile` command: which project a file is compiled in, and whether that came from a config, a `default-project` or the single-file fallback. |
 | `project-status.test.mjs` | How that answer is worded in the status bar. Bundles `vscode/src/project-status.ts` with esbuild. |

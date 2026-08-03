@@ -27,7 +27,7 @@ one of the utility modules, so a handler stays readable:
 | Module | Namespace | What belongs in it |
 | ------ | --------- | ------------------ |
 | `paths.h` / `paths.cpp` | `artic::ls::paths` | Everything that turns a path or URI into a file identity: `canonical_path`, `lookup_key`, `to_absolute_path`, `from_msbuild_path`, `read_file`. **The only legitimate source of a lookup key** — see the file-identity gotcha below. |
-| `text.h` | `artic::ls::text` | Header-only string helpers: `to_lower`, `trim_left`, `strip_quotes`, `split_whitespace`, `quote`. |
+| `text.h` | `artic::ls::text` | Header-only string helpers: `to_lower`, `trim_left`, `strip_quotes`, `split_whitespace`, `split_command_line`, `quote`. |
 | `lsp_convert.h` / `.cpp` | `artic::ls` | Conversions between artic's `Loc`/`Severity`/`Diagnostic` and the `lsp::` protocol types, plus `contains(range, position)`. |
 | `ast_render.h` / `.cpp` | `artic::ls` | Turning AST nodes into display strings: `print_to_string`, `print_param_list`, `render_decl`, and the `symbol_kind_of` mapping. Hover, document symbols, workspace symbols, code lens and completion all render through here so they cannot disagree. |
 | `symbol_index.{h,cpp}` | `artic::ls` | The parse-only, per-project declaration index behind `workspace/symbol`. |
@@ -627,6 +627,14 @@ Open a PR against AnyDSL/artic with the non-LSP fixes listed under
   `from_msbuild_path()` now. `build.ninja` is deliberately *not* converted: it is generated
   per platform and a literal backslash there is only ever a separator on Windows, where it
   already works.
+- **A build command must be unwrapped before it can be tokenised.** A generated command is
+  `cmd.exe /C "<real command>"`, one quote pair around the whole line including its ` && `
+  separators, so quote-aware splitting returns it as a *single* token — the parser then finds
+  no artic invocation and the project silently expands to nothing, which looks exactly like a
+  detection bug. `unwrap_shell_command()` in [artic-lsp/src/config.cpp](artic-lsp/src/config.cpp)
+  strips it first. The old code split on whitespace and stripped stray quotes per token, which
+  needed no unwrapping but lost every path containing a space. Guarded by
+  [test/paths-with-spaces.test.mjs](test/paths-with-spaces.test.mjs).
 - **Writing to a server that is exiting raises EPIPE on Linux and is silent on Windows.**
   `LspClient.stop()` sends `exit` right after `shutdown`, so the write races the server
   closing stdin. Unhandled, it surfaced as `write EPIPE` in an `after` hook *after the test

@@ -61,7 +61,11 @@ They match on the filename now.
 [README](../README.md#workspace-configuration-file). Three build-system formats are also parsed
 directly, all in [artic-lsp/src/config.cpp](../artic-lsp/src/config.cpp):
 
-- **`.vcxproj`** — `parse_vcxproj()` reads the artic invocation out of the build command.
+- **`.vcxproj`** — `parse_vcxproj()` reads the artic invocation out of the `<Command>` element.
+  The element holds a shell command line wrapped in XML, so each line is run through `xml_text()`
+  (tags dropped first, then `&quot;` and friends decoded — the other order would mistake a `&lt;`
+  in the command for a tag) before it is tokenised. The first token that names an artic executable
+  wins, and arguments are taken until the first one starting with `-`.
 - **`.sln`** — `parse_sln()` expands a solution to the `.vcxproj` files it lists. Solution
   *folders* reuse the same `Project(...)` syntax and are skipped, and so is any project without an
   `artic.exe` build command: a CMake-generated solution is mostly `ZERO_CHECK`/`ALL_BUILD` noise
@@ -75,7 +79,23 @@ directly, all in [artic-lsp/src/config.cpp](../artic-lsp/src/config.cpp):
   CMake's `cmd.exe /C "..."` wrapper becomes the base directory for relative source paths. The
   first artic invocation wins, and arguments are taken until the first one starting with `-`.
 
-Paths containing spaces are not supported in any of the three.
+**A build command is a shell command line, so a path containing a space is quoted.** All three
+formats therefore tokenise with `text::split_command_line()`, which treats a quoted run as one
+token, rather than splitting on whitespace and stripping stray quotes afterwards. The old
+behaviour turned `"C:\my sources\main.art"` into two paths that do not exist, so the project
+expanded to nothing and every cross-file reference became an unknown identifier.
+
+That only works once the shell wrapper is off: a generated command is usually
+`cmd.exe /C "<real command>"`, whose outer quote pair spans the whole line — including the ` && `
+separators — so a quote-aware split would return it as a single token. `unwrap_shell_command()`
+removes it first, and only when the remainder after a `/C`, `/c` or `-c` token is *fully* quoted,
+so a real argument is never mistaken for a wrapper. Guarded by
+[test/paths-with-spaces.test.mjs](../test/paths-with-spaces.test.mjs).
+
+**An executable or source path is recognised by its own base name, not `fs::path`.** A build file
+spells paths with the separator of the platform that generated it, which is not necessarily the
+one we are parsing on — `fs::path("D:\\any dsl\\bin\\artic.exe").stem()` is the entire string on
+Linux. `is_artic_executable()` and `is_artic_source()` split on both separators themselves.
 
 **A backslash is a separator only on Windows, and `.sln`/`.vcxproj` always use one.** Both MSBuild
 parsers go through `paths::from_msbuild_path()`. `build.ninja` deliberately does **not**: it is
