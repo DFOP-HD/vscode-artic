@@ -164,3 +164,89 @@ describe('features while the code does not compile', () => {
         assert.equal(normalizeUri(location.uri), normalizeUri(shapesUri));
     });
 });
+
+// A break in the *middle* of a file, which is where the editor actually puts one. The
+// parser used to consume the token that would have resynchronised it -- typically the `fn`
+// opening the next declaration -- so a single unfinished expression cost one error per
+// token to the end of the file, and every declaration below the cursor vanished from the
+// AST. That is the difference between "the compiler kept going" and "the editor is usable".
+describe('a break in the middle of a file', () => {
+    let ws, client, uri, text;
+    let version = 1;
+
+    const CASCADE = [
+        'fn cascade_a() -> i32 { 1 }',
+        'fn cascade_broken(x: i32) -> i32 { x +',   // unfinished, mid-file
+        'fn cascade_b() -> i32 { 2 }',
+        'fn cascade_c() -> i32 { 3 }',
+        '',
+    ].join('\n');
+
+    before(async () => {
+        ws = stageFixture('navigation');
+        client = new LspClient(findServerBinary(), { cwd: ws.dir });
+        await client.initialize(ws.uri);
+
+        uri = ws.fileUri('src', 'uses.art');
+        text = ws.read('src', 'uses.art') + '\n' + CASCADE;
+
+        client.openDocument(uri, ws.read('src', 'uses.art'));
+        await client.waitForDiagnostics(uri);
+        client.clearDiagnosticsLog();
+        client.changeDocument(uri, text, ++version);
+        await client.waitForDiagnostics(uri);
+    });
+
+    after(async () => {
+        await client?.stop();
+        ws?.cleanup();
+    });
+
+    // Everything the parser itself reports. The type errors that follow are a separate
+    // amplifier, driven by whatever wreckage the parse left behind.
+    const parseErrors = () => client.diagnosticsFor(uri)
+        .filter((d) => d.severity === 1 && d.message.startsWith('expected '));
+
+    const allErrors = () => client.diagnosticsFor(uri).filter((d) => d.severity === 1);
+
+    test('does not report one parse error per token to the end of the file', () => {
+        const errors = parseErrors();
+        assert.ok(errors.length > 0, 'the fixture must be broken, or this proves nothing');
+        assert.ok(errors.length <= 3,
+            `one unfinished expression should not cost ${errors.length} parse errors:\n` +
+            errors.map((e) => `  ${e.range.start.line + 1}: ${e.message}`).join('\n'));
+    });
+
+    test('reports each parse error on a distinct token', () => {
+        const positions = parseErrors().map((e) => `${e.range.start.line}:${e.range.start.character}`);
+        assert.equal(new Set(positions).size, positions.length,
+            `two errors about the same token say nothing the first did not: ${positions.join(', ')}`);
+    });
+
+    test('does not let the type checker multiply the wreckage either', () => {
+        // The recovered parse feeds fewer broken nodes downstream, so the total falls with
+        // it. Bounded rather than exact: the type errors are not what this guards.
+        const errors = allErrors();
+        assert.ok(errors.length <= 6,
+            `expected the whole cascade to stay bounded, got ${errors.length}:\n` +
+            errors.map((e) => `  ${e.range.start.line + 1}: ${e.message}`).join('\n'));
+    });
+
+    test('keeps the declarations below the break in the outline', async () => {
+        const symbols = await client.request('textDocument/documentSymbol', {
+            textDocument: { uri },
+        });
+        const names = symbols.map((s) => s.name);
+        assert.ok(names.includes('cascade_c'),
+            `expected 'cascade_c' below the break, got: ${names.join(', ')}`);
+    });
+
+    test('go-to-definition still reaches a declaration below the break', async () => {
+        const result = await client.request('textDocument/definition', {
+            textDocument: { uri },
+            position: locate(text, 'cascade_c() -> i32'),
+        });
+        const location = Array.isArray(result) ? result[0] : result;
+        assert.ok(location, 'expected a definition for a declaration parsed after recovery');
+    });
+});

@@ -49,9 +49,10 @@ ctest --test-dir artic-lsp/buildGcc -E "^thorin_"
 | `document-symbols.test.mjs` | `textDocument/documentSymbol`: the outline tree, the symbol kind of each declaration kind, and the two ranges. |
 | `workspace-symbols.test.mjs` | `workspace/symbol` across every project in the config, and the reference-count code lens. |
 | `navigation.test.mjs` | `textDocument/definition` (on a declaration as well as a reference), `documentHighlight`, `typeDefinition`, `implementation` and `selectionRange`. |
-| `incomplete-code.test.mjs` | The same features while the buffer does not compile: go-to-definition and completion on a half-written call, and the outline, hover and semantic tokens of a partially parsed file. |
+| `incomplete-code.test.mjs` | The same features while the buffer does not compile: go-to-definition and completion on a half-written call, the outline, hover and semantic tokens of a partially parsed file, and the bound on how many errors one broken construct may cost. |
 | `latency.test.mjs` | How long the requests an editor issues while typing take, against a generated multi-file project. |
 | `did-close.test.mjs` | `textDocument/didClose`: the closed document's diagnostics are withdrawn and its unsaved buffer is discarded. |
+| `watched-files.test.mjs` | `workspace/didChangeWatchedFiles`: a config or build file rewritten on disk is re-read, a changed source file is not, and a created one reloads the workspace. |
 | `path-identity.test.mjs` | The same features when the file is reached through a `.vcxproj` that spells the path differently from the editor. |
 | `sln-config.test.mjs` | `.sln` files listed in `include`, including the noise a CMake-generated solution brings with it. |
 | `ninja-config.test.mjs` | `build.ninja` files listed in `include`: artic targets become projects, other custom commands are ignored. |
@@ -110,6 +111,14 @@ exactly which keystroke it is simulating.
 
 Such a suite must **assert that the buffer really is broken**, otherwise it can
 silently degrade into a second copy of the valid-source tests.
+
+Where the break sits matters as much as that there is one. A break at the *end*
+of a file costs nothing downstream; a break in the middle is what an editor
+actually produces, and it used to cost an error per token to the end of the file.
+The *a break in the middle of a file* block bounds that, and bounds parse errors
+separately from type errors — they are two different amplifiers, and only the
+first one is fixed. Assert on the class of error you are guarding, not on a total
+that a change elsewhere can move.
 
 ### Latency
 

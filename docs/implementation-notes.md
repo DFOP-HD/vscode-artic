@@ -34,6 +34,47 @@ Two consequences that most handlers have to deal with:
   what keeps navigation, hover, completion and the outline alive while the user is mid-edit.
   Guarded by [test/incomplete-code.test.mjs](../test/incomplete-code.test.mjs).
 
+### Recovering from a parse error
+
+Surviving a parse error is not the same as staying useful after one. A break in the *middle* of a
+file — which is where an editor puts one — used to cost an error per token to the end of the file,
+and every declaration below the break was lost: for `fn a`, an unfinished
+`fn broken(x: i32) -> i32 { x +`, then `fn b` and `fn c`, the parser reported **eight** errors, all
+but the first pointing at `fn b`, and neither `b` nor `c` reached the AST. In the editor that is
+the outline, hover, completion and go-to-definition disappearing for everything below the line
+being typed.
+
+Three amplifiers, fixed in [artic/include/artic/parser.h](../artic/include/artic/parser.h) and
+[artic/src/parser.cpp](../artic/src/parser.cpp):
+
+- **`expect()` consumed on mismatch.** It called `next()` unconditionally, so a missing token also
+  ate the token that would have resynchronised the parse — usually the `fn` opening the next
+  declaration. It now leaves a token that is not what was expected in place. Every loop that could
+  have depended on it consuming was audited: `parse_list` still terminates because a token that is
+  neither a separator nor a terminator breaks it, and the block, module and top-level loops all
+  dispatch on the token themselves.
+- **`parse_error_decl()` skipped exactly one token**, so it re-reported on every token of whatever
+  followed. It now consumes one and then calls `skip_to_decl()`, which runs to the next token that
+  can begin a declaration (`fn struct enum type mod static implicit use let #`). Braces are
+  counted, so a declaration nested inside the body being skipped does not end the skip early, and
+  a `}` at depth zero stops it because it belongs to an enclosing block.
+- **Nothing suppressed a re-report about a token already complained about.** `expect()` failing at
+  a token and then the recovery path reporting the same token says nothing the first message did
+  not. `reported_at()` records the last position reported and every recovery point checks it.
+
+Eight errors become three, each on a distinct token, and the declarations below the break are
+parsed at top level again. This is an upstreamable change rather than an LSP-only one, so it takes
+no `ENABLE_LSP` guard — and it moved no expected-output file in the compiler's own suite, which
+stays at 145/145. Guarded by the *a break in the middle of a file* block in
+[test/incomplete-code.test.mjs](../test/incomplete-code.test.mjs), which bounds the parse errors,
+requires them to be at distinct positions, and asserts the declarations below the break are still
+in the outline and still reachable by go-to-definition.
+
+The type errors that follow a parse error are a **separate** amplifier and are only bounded, not
+fixed: a broken node still reaches the type checker and still produces "cannot infer type for
+expression". The total for the case above fell from 13 to 6 as a side effect of the parse
+recovering better, and the test holds that line.
+
 `ls::NameMap` ([artic/include/artic/name_map.h](../artic/include/artic/name_map.h)) is the index
 every navigation feature resolves through: `find_decl_at`, `find_ref_at`, `find_decl`, `find_refs`.
 
@@ -436,3 +477,32 @@ anything to drop.
 When there was, the project is recompiled from disk **before** the diagnostics are withdrawn —
 other documents may have been reported broken because of edits that no longer exist, and the
 recompile republishes for every file in the project, including the one being closed.
+
+### Files that change on disk
+
+A config or build file is the source of truth for a project, and it is the one file the editor
+never opens: a `git checkout` that rewrites `artic.json`, or a build regenerating `build.ninja`,
+happens entirely behind the server's back. `workspace/didChangeWatchedFiles` is the only
+notification that reports it, and its `Changed` events used to be discarded outright — which
+mattered more once zero-config detection made a build file authoritative for a workspace that has
+no config at all.
+
+The three file events are answered differently, because they mean different things:
+
+| Event | Response | Why |
+| ----- | -------- | --- |
+| `Created`, `Deleted` (any watched file) | reload the whole workspace | a source file appearing or disappearing changes what a `files` glob expands to, so no single project can be updated in isolation |
+| `Changed` on a config or build file | `Server::reload_config()` | that one file's projects are stale; nothing else is |
+| `Changed` on a source file | ignored | `didChange` carries the buffer, and the editor's copy wins over what is on disk |
+
+`reload_config()` is the body `didOpen` and `didSave` already ran, extracted: re-read the config,
+throw away the symbol index (project instances are recreated, so anything cached under a project
+name now describes a project that no longer exists), and drop the compile. It adds one thing none
+of the three callers did — **recompiling the active file afterwards**. Diagnostics are push-only,
+so fixing a config used to leave the old errors on screen until the user touched a source file.
+The active file has to be captured *before* `compile.reset()`, or there is nothing left to ask.
+
+A config the editor currently has open is skipped: `open_configs_` is maintained by `didOpen` and
+`didClose`, and a watcher event for one of those files is the echo of the save that `didSave` has
+already handled. Guarded by [test/watched-files.test.mjs](../test/watched-files.test.mjs), which
+rewrites an `artic.json` and a `build.ninja` on disk without ever opening them.

@@ -293,7 +293,9 @@ ctest --test-dir artic-lsp/build-nolsp -E "^thorin_"
   **LSP-only** (guarded, will never be upstreamed) and **upstreamable**. The latter is
   currently: the `err.stream` fix in `log.h`, uninitialised `Loc::Pos` members, the
   `std::is_pod` → `is_standard_layout && is_trivial` fix in `hash.h` (`is_pod` is deprecated
-  in C++20), lexer/parser/`ast.cpp` error tolerance, the type-checker error tolerance in
+  in C++20), lexer/parser/`ast.cpp` error tolerance, the bounded parse-error recovery in
+  `parser.h`/`parser.cpp` (non-consuming `expect()`, `skip_to_decl()`, `reported_at()`), the
+  type-checker error tolerance in
   `check.cpp`, the `pop_scope` warning fix, `Node::dump()`/`Type::dump()` writing to
   `log::err` instead of `log::out`, the `usage()` text in `main.cpp`, and the
   `file(row, col)` → `file:row:col` location format in `loc.h` (a separate, purely cosmetic
@@ -360,8 +362,7 @@ Only what is **not** done is tracked here. Everything already shipped is describ
 [docs/implementation-notes.md](docs/implementation-notes.md); if you want to know how a
 feature works, read that, not a changelog.
 
-Ordered by value. Items 1 and 2 are the two things a user actually notices; 3 and 4 are
-hygiene.
+Ordered by value. Item 1 is the thing a user actually notices; the rest is hygiene.
 
 ### 1. Zero-config projects — *1a–1c done; only the open question is left*
 
@@ -423,62 +424,29 @@ files server-side) are done.*
   `initializationOptions`, so a user can point the server at sources without committing
   anything. Lowest value; only if 1d leaves a real gap.
 
-### 2. Bounded parse-error recovery — *not started*
-
-The compiler is error-tolerant in the sense that it keeps going, but not in the sense that it
-stays useful. Measured against the current build: a file holding `fn a`, then
-`fn broken(x: i32) -> i32 { x +`, then `fn b` and `fn c` produces **nine errors**, all but the
-first pointing at `fn b`, and **`b` and `c` do not reach the AST at all**. In the editor that
-means the outline, hover, completion and go-to-definition for everything below the line being
-typed disappear — the exact situation
-[test/incomplete-code.test.mjs](test/incomplete-code.test.mjs) shows the server surviving, but
-only because the break is at the *end* of the file.
-
-Three amplifiers, each fixable on its own:
-
-- **`Parser::expect()` consumes on mismatch.** It calls `next()` unconditionally
-  ([artic/include/artic/parser.h](artic/include/artic/parser.h)), so a missing token also eats
-  the token that would have resynchronised the parse — typically the `fn` starting the next
-  declaration. This is the single biggest amplifier and the smallest fix.
-- **`parse_error_decl()` skips exactly one token**, so it re-reports on every token of whatever
-  follows. It needs panic-mode recovery: skip to the next token that can begin a declaration
-  (`fn struct enum type mod static implicit use #`) or to a closing brace at the current
-  nesting depth. `parse_error_expr()` wants the same, resynchronising on `;` or `}`.
-- **Nothing suppresses a cascade.** Report at most one parse error until the parser has
-  consumed a token successfully, as clang and rustc do. Whether the type checker needs the same
-  treatment once a node carries an `ErrorType` has to be measured — `check.cpp` already carries
-  fork error-tolerance changes.
-
-**This is an upstreamable change, not an LSP-only one**, so it takes no `ENABLE_LSP` guard —
-but it changes what the standalone compiler prints, so expect the `ctest` suite's
-expected-output files to move. **Every such move is a review point, not a rubber stamp:** a
-test that stops reporting an error it used to report is a regression, not a success. Guard it
-by extending `incomplete-code.test.mjs` with cascade assertions — at most N diagnostics for one
-broken construct, and the declarations *after* the break must still appear in the outline.
-Written today, that test fails.
-
-Sequencing: this lands in the same files as item 4, so either upstream that set first or accept
-one larger PR.
-
-### 3. React to files that change on disk — *not started*
-
-`Workspace_DidChangeWatchedFiles` in [artic-lsp/src/server.cpp](artic-lsp/src/server.cpp)
-handles `Created` and `Deleted` by reloading the whole workspace and ignores `Changed` entirely
-("Handle elsewhere"), which means the editor's own didOpen/didSave. So a `git checkout` that
-rewrites a source file, or a build that regenerates `build.ninja`, leaves the server on stale
-projects until the user happens to open the file. **Item 1c raised the stakes**: a build file is
-now the source of truth for a workspace with no config, and it is never opened. Route `Changed`
-on a config or build file to `on_config_changed`. The create/delete path is separately worth
-narrowing: it
-reloads unconditionally — including the symbol index — for any watched file, and a build
-writing into the tree will thrash it.
-
-### 4. Upstream the upstreamable fork set — *not started*
+### 2. Upstream the upstreamable fork set — *not started*
 
 Open a PR against AnyDSL/artic with the non-LSP fixes listed under
 [Working with the artic/ submodule](#working-with-the-artic-submodule). The unmerged
 `origin/error-tolerance` branch is prior art. The longer this waits the more expensive it gets
-— item 2 adds to exactly this set.
+— the parse-error recovery added to exactly this set.
+
+### 3. Bound the *type* errors a parse error causes — *not started*
+
+Parse-error recovery is done (see
+[Recovering from a parse error](docs/implementation-notes.md#recovering-from-a-parse-error)):
+one broken construct now costs three parse errors instead of eight, and the declarations below
+it survive. What is left is the second amplifier, downstream of it — a node the parser gave up
+on still reaches the type checker and still produces "cannot infer type for expression", once
+per wreckage. For the reference case the total is 6 diagnostics, of which 3 are type errors that
+say nothing.
+
+Fixing it means propagating "this subtree came from a parse error" so `check.cpp` stays quiet on
+it, rather than suppressing by message. `check.cpp` already carries fork error-tolerance changes,
+so this lands in the same file. **Measure first**: the bound in
+[test/incomplete-code.test.mjs](test/incomplete-code.test.mjs) is what says whether it is worth
+doing, and the same review rule applies — a `ctest` expectation that stops reporting an error it
+used to report is a regression, not a success.
 
 ### Deferred
 
@@ -545,6 +513,14 @@ Open a PR against AnyDSL/artic with the non-LSP fixes listed under
   the fast loop never showed it. Worked around with `to_file_uri()` in
   [artic-lsp/src/server.cpp](artic-lsp/src/server.cpp); the real bug is upstream in
   lsp-framework and is worth reporting.
+- **`Parser::expect()` no longer consumes on a mismatch, so any new loop must not rely on
+  it for progress.** Leaving the offending token in place is what lets the parser resume at
+  the next declaration instead of eating it, but it means a `while` whose only advance came
+  from a failing `expect()` now spins. The existing ones are safe and were audited:
+  `parse_list` breaks on a token that is neither separator nor terminator, and the block,
+  module and top-level loops dispatch on the token themselves. `parse_error_decl()` is the
+  guarantee at the declaration level — it always consumes at least one token before
+  `skip_to_decl()` runs.
 - **`ConfigLog::error("...{}", x)` does not format.** The `{}` reaches the user verbatim and
   `x` is silently treated as the search context.
 - **`JSON_DIAGNOSTIC_POSITIONS` changes the layout of `basic_json`, so it is a build-wide
