@@ -66,6 +66,11 @@ installed from the extensions panel.
 | ------- | ----------- |
 | `Artic: Restart Artic Language Server` | Restarts the server process. |
 | `Artic: Detect workspace configuration` | Scans the workspace for `.sln`, `build.ninja` and `.vcxproj` files that invoke artic and adds them to `artic.json`. |
+| `Artic: Show the project this file belongs to` | Reports which project the active file is compiled in, and which configuration file said so. |
+
+The status bar shows the same answer while an Artic file is open. It reads `single file` on a
+yellow background when no configuration was found above the file: that file is then compiled on
+its own, and anything it expects from another file is reported as an unknown identifier.
 
 ## Settings
 
@@ -170,6 +175,7 @@ vscode-artic
 ├── vscode/                         # the VS Code extension (TypeScript)
 │   ├── src/extension.ts            # the language client
 │   ├── src/detect.ts               # "Detect workspace configuration"
+│   ├── src/project-status.ts       # what the status bar says about the active file's project
 │   ├── syntaxes/artic.tmGrammar.json
 │   ├── language-configuration.json
 │   ├── snippets/artic.json

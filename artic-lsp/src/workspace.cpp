@@ -48,6 +48,25 @@ std::vector<File*> Workspace::collect_project_files(const fs::path& file, config
     return {tracked_file(file)};
 }
 
+FileProject Workspace::project_of_file(const fs::path& file, config::ConfigLog& log) {
+    auto project = discover_project_for_file(file, log);
+    if (!project) return {};
+
+    FileProject info;
+    info.name = project->name;
+    info.origin = project->origin;
+    if (uses_file(*project, file)) {
+        info.provenance = FileProject::Provenance::Config;
+        info.file_count = total_file_count(*project);
+    } else {
+        // The default project does not list the file, so a compile adds it to the project's
+        // own files, exactly as `collect_project_files` does.
+        info.provenance = FileProject::Provenance::DefaultProject;
+        info.file_count = total_file_count(*project) + 1;
+    }
+    return info;
+}
+
 bool Workspace::on_config_changed(fs::path config_path, config::ConfigLog& log) {
     config_path = paths::canonical_path(config_path);
     log::info("Configuration file changed: {}", config_path.generic_string());

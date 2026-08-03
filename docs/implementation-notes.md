@@ -126,6 +126,45 @@ own hint instead of both landing on the first line.
 `Workspace::projects_of_config()` never parses anything: `configs_` is keyed by canonical path, so
 a config nothing has opened yet simply yields no hints.
 
+### Which project a file is in
+
+A file with no configuration above it is compiled **alone** — `collect_project_files()` falls
+through to `{tracked_file(file)}`. That is often the right answer (most `.art` files in the AnyDSL
+checkouts really are independent single-file programs), but it used to be completely silent: every
+cross-file reference became "unknown identifier" and nothing said why.
+
+`Workspace::project_of_file()` answers the same question `collect_project_files()` acts on, in a
+form that can be shown to a user: it goes through `discover_project_for_file()` — the same
+discovery a compile does — and returns a `FileProject` with
+
+| Provenance | Meaning |
+| ---------- | ------- |
+| `Config` | A project lists this file. `file_count` is the project's own files plus its dependencies'. |
+| `DefaultProject` | The file is listed nowhere, but a `default-project` applies; a compile adds this file to that project, so `file_count` includes it. |
+| `SingleFile` | No configuration was found. The file is compiled on its own. |
+
+**It is exposed through `workspace/executeCommand`, not a request of our own.** A custom method
+would need a client that speaks it; every LSP client already speaks `executeCommand`. The command
+is `artic.projectForFile`, it takes a single document URI string, and it answers a JSON object
+(`file`, `provenance`, `name`, `origin`, `fileCount`) or `null`. It triggers no compile.
+
+The argument arrives as a URI *string* and has to be turned into a path with
+`lsp::FileUri(lsp::Uri::parse(...)).path()`. Plain `Uri::path()` keeps the leading slash a Windows
+drive path carries (`/D:/...`), which canonicalises to something that matches no config — the
+symptom is every file reporting `single-file`.
+
+On the editor side, [vscode/src/extension.ts](../vscode/src/extension.ts) queries this on every
+active-editor change and after every save, and renders it in a status bar item; the wording lives
+in [vscode/src/project-status.ts](../vscode/src/project-status.ts) so it can be unit tested without
+a VS Code instance. A single-file compile gets `statusBarItem.warningBackground` and, when the item
+is clicked, offers to run **Artic: Detect workspace configuration**. Detection stays a status bar
+affordance rather than a notification: it is shown on every file, and a popup on every file is not
+a feature.
+
+`Initialize` also records `workspaceFolders` (falling back to the deprecated `rootUri`) in
+`Server::workspace_roots_`. Nothing consumes it yet — it is what bounds the upward search when the
+server starts looking for build files itself.
+
 ---
 
 ## Language features

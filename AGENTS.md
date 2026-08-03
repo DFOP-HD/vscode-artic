@@ -362,12 +362,13 @@ feature works, read that, not a changelog.
 Ordered by value. Items 1 and 2 are the two things a user actually notices; 3 and 4 are
 hygiene.
 
-### 1. Zero-config projects — *not started, highest value*
+### 1. Zero-config projects — *1a and 1b done, highest value*
 
 Requiring a hand-written `artic.json` before anything works is the first thing every new user
-hits, and today a file with no config is compiled **alone and silently**:
+hits, and a file with no config is still compiled **alone**:
 `Workspace::collect_project_files` falls through to `{tracked_file(file)}`, so every
-cross-file reference becomes "unknown identifier" with nothing saying why.
+cross-file reference becomes "unknown identifier". The status bar now says so (1b), but
+nothing yet makes it unnecessary.
 
 **What bounds this: artic has no import mechanism.** Files are concatenated on the command
 line, there is no `#include`, and `use` only aliases a module that is already in the program.
@@ -409,15 +410,11 @@ a `default-project` that just inherits the two libraries.
 
 #### The work
 
-- **1a — capture the workspace root.** *Prerequisite for everything else.* `reqst::Initialize`
-  in [artic-lsp/src/server.cpp](artic-lsp/src/server.cpp) reads only
-  `initializationOptions.restartFromCrash` and drops `rootUri`/`workspaceFolders` on the floor.
-- **1b — say which project a file is in, and why.** A status-bar item and an
-  `artic.showProjectForFile` command reporting the project name and its provenance (config
-  file, detected build file, single-file fallback). Cheap, and the thing that turns the silent
-  fallback into an explainable one. **Do this first** — without it the rest is magic that
-  cannot be debugged, and on its own it already fixes the "nothing says why" half of the
-  complaint.
+*1a (capture the workspace root) and 1b (say which project a file is in) are done — see
+[Which project a file is in](docs/implementation-notes.md#which-project-a-file-is-in).
+`Server::workspace_roots_` exists and is logged, but nothing consumes it yet; 1c is what
+consumes it.*
+
 - **1c — detect build files server-side, in memory.** The C++ side can already *parse* `.sln`,
   `build.ninja` and `.vcxproj` (`parse_sln`, `parse_ninja`, `parse_vcxproj` in
   [artic-lsp/src/config.cpp](artic-lsp/src/config.cpp)). The only reasons a user must run
@@ -430,7 +427,8 @@ a `default-project` that just inherits the two libraries.
   explicit command keeps its place for anyone who wants the result pinned in the repo.
   The scan must be bounded — skip hidden and `node_modules`-style directories, cap the depth,
   cap the number of files — and cached, because it runs on the miss path of every file that
-  has no config above it.
+  has no config above it. `FileProject::Provenance` needs a fourth value for it, so the status
+  bar can say the answer came from a build file rather than from a config the user wrote.
 - **1d — a *narrow* implicit project, only where the evidence supports one.** With no config
   and no build file, the fallback stays single-file unless a directory looks like one program.
   Any rule here must be justified against the table above before it is written, and must be
@@ -438,7 +436,7 @@ a `default-project` that just inherits the two libraries.
   nothing. Open question; do not implement without agreeing the rule first.
 - **1e — globs from a setting.** `artic.include` / `artic.projectFiles` forwarded through
   `initializationOptions`, so a user can point the server at sources without committing
-  anything. Lowest value; only if 1b–1d leave a real gap.
+  anything. Lowest value; only if 1c–1d leave a real gap.
 
 ### 2. Bounded parse-error recovery — *not started*
 
@@ -604,6 +602,12 @@ Open a PR against AnyDSL/artic with the non-LSP fixes listed under
   [test/path-identity.test.mjs](test/path-identity.test.mjs).
   Only the drive letter is folded — lowercasing the whole path would stop diagnostic URIs
   matching the document VS Code opened.
+- **`lsp::Uri::path()` keeps the leading slash of a Windows drive path; `lsp::FileUri::path()`
+  strips it.** A URI arriving as a *string* (a command argument, say) parses to a `Uri`, and
+  `/D:/ws/main.art` canonicalises to something no config matches — so
+  `artic.projectForFile` reported `single-file` for every file, which looks exactly like a
+  discovery bug. Wrap it: `lsp::FileUri(lsp::Uri::parse(s)).path()`. Note `path()` borrows
+  from the object, so the `FileUri` has to outlive the use.
 - `artic-lsp/src/main.cpp` ignores `argv`; the extension still passes `--lsp`, which is a no-op.
 - `libartic` exports `ENABLE_LSP` as a **PUBLIC** compile definition, so it leaks to every
   consumer of the library, including the `artic` executable.

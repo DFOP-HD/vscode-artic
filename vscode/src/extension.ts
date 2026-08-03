@@ -6,6 +6,7 @@ import { execFileSync } from 'child_process';
 import { chmodSync, existsSync, statSync } from 'fs';
 import { BuildFile, selectWorkspaceConfigFiles } from './detect';
 import { ServerPathHost, resolveServerPath } from './server-path';
+import { ProjectForFile, isFallback, statusBarText, statusBarTooltip } from './project-status';
 
 let client: LanguageClient | undefined = undefined;
 let expectedStop = false;
@@ -261,6 +262,26 @@ async function updateWorkspaceConfigIncludes(workspaceFolder: vscode.WorkspaceFo
     };
 }
 
+function isArticDocument(document: vscode.TextDocument): boolean {
+    return document.uri.scheme === 'file' && document.languageId === 'artic';
+}
+
+// The server owns the answer, because it is the one that walks the directories looking for
+// a configuration. Asking it costs nothing: no compile is triggered.
+async function queryProjectForFile(uri: vscode.Uri): Promise<ProjectForFile | undefined> {
+    if (!client || client.state !== State.Running) return undefined;
+    try {
+        const result = await client.sendRequest<ProjectForFile | null>('workspace/executeCommand', {
+            command: 'artic.projectForFile',
+            arguments: [uri.toString()],
+        });
+        return result ?? undefined;
+    } catch (error) {
+        console.warn('Failed to query the Artic project for a file:', error);
+        return undefined;
+    }
+}
+
 async function detectWorkspaceConfiguration(): Promise<void> {
     const workspaceFolders = vscode.workspace.workspaceFolders;
     if (!workspaceFolders || workspaceFolders.length === 0) {
@@ -288,6 +309,54 @@ async function detectWorkspaceConfiguration(): Promise<void> {
 export function activate(context: vscode.ExtensionContext) {
     startClient(context);
 
+    // Which project the active file is compiled in. Without it, the fallback to a
+    // single-file compile is invisible and its symptom -- every cross-file reference
+    // reported as an unknown identifier -- looks like a bug in the server.
+    const projectStatus = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 90);
+    projectStatus.command = 'artic.showProjectForFile';
+    context.subscriptions.push(projectStatus);
+
+    let lastProject: ProjectForFile | undefined;
+
+    const refreshProjectStatus = async () => {
+        const editor = vscode.window.activeTextEditor;
+        if (!editor || !isArticDocument(editor.document)) {
+            lastProject = undefined;
+            projectStatus.hide();
+            return;
+        }
+        lastProject = await queryProjectForFile(editor.document.uri);
+        projectStatus.text = statusBarText(lastProject);
+        projectStatus.tooltip = statusBarTooltip(lastProject);
+        projectStatus.backgroundColor = isFallback(lastProject)
+            ? new vscode.ThemeColor('statusBarItem.warningBackground')
+            : undefined;
+        projectStatus.show();
+    };
+
+    context.subscriptions.push(
+        vscode.window.onDidChangeActiveTextEditor(() => { void refreshProjectStatus(); }),
+        vscode.workspace.onDidSaveTextDocument(() => { void refreshProjectStatus(); }),
+    );
+    void refreshProjectStatus();
+
+    const showProjectCommand = vscode.commands.registerCommand('artic.showProjectForFile', async () => {
+        await refreshProjectStatus();
+        if (!vscode.window.activeTextEditor) {
+            vscode.window.showInformationMessage('Open an Artic file to see which project it belongs to.');
+            return;
+        }
+        const message = statusBarTooltip(lastProject);
+        if (isFallback(lastProject)) {
+            const choice = await vscode.window.showWarningMessage(
+                message, 'Detect workspace configuration');
+            if (choice) await vscode.commands.executeCommand('artic.detectWorkspaceConfiguration');
+        } else {
+            vscode.window.showInformationMessage(message);
+        }
+    });
+    context.subscriptions.push(showProjectCommand);
+
     // Register commands
     const restartCommand = vscode.commands.registerCommand('artic.restart', async () => {
         if (client) {
@@ -295,6 +364,7 @@ export function activate(context: vscode.ExtensionContext) {
             client = undefined;
         } 
         startClient(context);
+        void refreshProjectStatus();
     });
     context.subscriptions.push(restartCommand);
 

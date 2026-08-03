@@ -35,6 +35,10 @@ namespace fs = std::filesystem;
 namespace artic::ls {
 namespace {
 
+// Answered through `workspace/executeCommand` rather than a request of our own: a custom
+// method would need the client to speak it, and every LSP client already speaks this one.
+constexpr std::string_view project_for_file_command = "artic.projectForFile";
+
 fs::path absolute_path(std::string_view file) {
     return paths::canonical_path(fs::path(file));
 }
@@ -126,6 +130,20 @@ void Server::setup_events_initialization() {
                 restart_from_crash = val->boolean();
         }
 
+        // The folders the editor has open. `workspaceFolders` supersedes `rootUri`, which
+        // the specification deprecated but every client still sends. Without either, the
+        // server has no idea where the project ends, which is what stops it from looking
+        // for a build file when no configuration exists.
+        workspace_roots_.clear();
+        if (auto& folders = params.workspaceFolders; folders.has_value() && !folders->isNull()) {
+            for (const auto& folder : folders->value())
+                workspace_roots_.push_back(absolute_path(folder.uri.path()));
+        }
+        if (workspace_roots_.empty() && !params.rootUri.isNull())
+            workspace_roots_.push_back(absolute_path(params.rootUri->path()));
+        for (const auto& root : workspace_roots_)
+            log::info("[LSP] workspace root: {}", root.generic_string());
+
         safe_mode_ = restart_from_crash;
         workspace_ = std::make_unique<workspace::Workspace>();
         
@@ -158,6 +176,9 @@ void Server::setup_events_initialization() {
                     .prepareProvider = true
                 },
                 .selectionRangeProvider = true,
+                .executeCommandProvider = lsp::ExecuteCommandOptions {
+                    .commands = { std::string(project_for_file_command) }
+                },
                 .semanticTokensProvider = lsp::SemanticTokensOptions{
                     .legend = lsp::SemanticTokensLegend{
                         .tokenTypes = {
@@ -2129,6 +2150,35 @@ void Server::setup_events_other() {
 
         log::info("[LSP] >>> Returning {} inlay hints", hints.size());
         return hints;
+    });
+
+    message_handler_.add<reqst::Workspace_ExecuteCommand>([this](reqst::Workspace_ExecuteCommand::Params&& params) -> reqst::Workspace_ExecuteCommand::Result {
+        log::info("\n[LSP] <<< Workspace ExecuteCommand {}", params.command);
+        if (params.command != project_for_file_command) return nullptr;
+        if (!params.arguments || params.arguments->empty() || !params.arguments->front().isString()) {
+            log::error("{} expects a single document URI argument", project_for_file_command);
+            return nullptr;
+        }
+
+        // Must be a FileUri, not the Uri that parsing yields: only FileUri::path() strips the
+        // leading slash Windows drive paths carry, and `path()` borrows from the object.
+        auto uri = lsp::FileUri(lsp::Uri::parse(params.arguments->front().string()));
+        auto file = absolute_path(uri.path());
+        workspace::config::ConfigLog log;
+        auto info = workspace_->project_of_file(file, log);
+        publish_config_diagnostics(log);
+
+        using Provenance = workspace::FileProject::Provenance;
+        lsp::json::Object result;
+        result["file"] = lsp::json::String(file.generic_string());
+        result["provenance"] = lsp::json::String(
+            info.provenance == Provenance::Config ? "config"
+            : info.provenance == Provenance::DefaultProject ? "default-project"
+            : "single-file");
+        result["name"] = lsp::json::String(info.name);
+        result["origin"] = lsp::json::String(info.origin.empty() ? std::string() : info.origin.generic_string());
+        result["fileCount"] = static_cast<lsp::json::Integer>(info.file_count);
+        return lsp::json::Value(std::move(result));
     });
 }
 

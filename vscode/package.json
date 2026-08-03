@@ -68,6 +68,11 @@
         "command": "artic.detectWorkspaceConfiguration",
         "title": "Detect workspace configuration",
         "category": "Artic"
+      },
+      {
+        "command": "artic.showProjectForFile",
+        "title": "Show the project this file belongs to",
+        "category": "Artic"
       }
     ],
     "configuration": {

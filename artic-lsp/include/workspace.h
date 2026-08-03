@@ -97,6 +97,28 @@ struct ConfigFile {
     std::vector<ConfigPath>       includes;
 };
 
+// Which project a file is compiled as part of, and where that answer came from.
+// Without this the fallback to a single-file compile is completely silent: every
+// cross-file reference becomes "unknown identifier" and nothing says why.
+struct FileProject {
+    enum class Provenance {
+        // No configuration was found above the file, so it is compiled on its own.
+        SingleFile,
+        // A project that lists this file.
+        Config,
+        // A configuration's `default-project`: the file is listed nowhere, but it is
+        // compiled alongside whatever that project depends on.
+        DefaultProject,
+    };
+
+    Provenance provenance = Provenance::SingleFile;
+    Project::Identifier name;
+    // Configuration file that declared the project.
+    fs::path origin;
+    // How many files are compiled together, this one included.
+    size_t file_count = 1;
+};
+
 
 class Workspace {
 public:
@@ -128,6 +150,10 @@ public:
     // If no project is found, return just the given file
     // The project config might not be known yet, therefore we may need to look for it and initialize it, hence the log output
     std::vector<File*> collect_project_files(const fs::path& file, config::ConfigLog& log);
+
+    // The same answer `collect_project_files` acts on, in a form that can be shown to the
+    // user. Goes through the same discovery, so it reports what a compile would really do.
+    FileProject project_of_file(const fs::path& file, config::ConfigLog& log);
 
     // return true if file was known before
     bool on_config_changed(fs::path config_path, config::ConfigLog& log);
