@@ -459,6 +459,17 @@ worth more than finishing it fast.
 
 ## Gotchas
 
+- **A completion the client never asks for looks exactly like a server that returns nothing.**
+  Only `.` and `:` were declared as `triggerCharacters`, so `let a = ` opened no widget while
+  `let a = .` opened a full one — reported as "completion does not work". Probing the protocol
+  at that cursor showed the server had always returned every item, including the wanted one.
+  Before debugging a language feature that "does nothing", establish which side is silent.
+- **An item without a `sortText` is sorted by its label, so any ordering the handler builds is
+  thrown away.** The completion handler reversed its item list twice to put the nearest scope
+  first; both calls were dead code, and the wanted declaration sat at rank 22 of 31 behind
+  `addrspace(...)`, `asm`, `bool`, `break` — off-screen in a twelve-row widget, so even an open
+  window looked empty. `finish()` in
+  [artic-lsp/src/server.cpp](artic-lsp/src/server.cpp) now ranks every path's items.
 - **`isa<T>()` returns null, and the completion handler used to dereference it.** The
   projection branch tested `type->isa<StructType>()` and then read `struct_type->decl.fields`
   from *both* the struct and the enum path, so typing `.` after an enum value dereferenced a

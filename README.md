@@ -22,7 +22,8 @@ non-technical problems.
 - Document symbols: outline view, breadcrumbs and Ctrl+Shift+O
 - Expand and shrink selection along the syntax tree (Shift+Alt+Right / Left)
 - Rename
-- Code completion for the symbols in scope
+- Code completion for the symbols in scope, ranked nearest-binding first and offered wherever an
+  expression, a type or a name can begin
 - Signature help while typing a call
 - Inlay hints for inferred types and for the parameters a call's arguments bind
 - Inlay hints on `artic.json` showing how many files each project and each pattern resolves to

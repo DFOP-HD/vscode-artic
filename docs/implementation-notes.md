@@ -453,6 +453,35 @@ available *inside* the loop, the outer walk registers `loop_binding()` (which un
 
 `use`-path completion goes through the same `ast::Path` branch as `a::b`.
 
+**A completion the editor never asks for does not exist.** The widget opens either on a declared
+trigger character or when the client decides on its own — and only `.` and `:` were declared, so
+`let a = ` produced nothing while `let a = .` produced a full list. The user-visible symptom was
+"completion does not work", but the server had always been answering correctly: probing the
+protocol at that cursor returned all 31 items including the function the user was after. The
+trigger set is now every character after which an expression, a type or a name can begin —
+including a space — and [vscode/package.json](../vscode/package.json) adds a `configurationDefaults`
+block enabling `editor.quickSuggestions` for the `artic` language, because a trigger character
+cannot cover typing the first letters of an identifier. Both halves are needed: the setting is only
+a *default* and a user's global value outranks it, so the trigger characters are the load-bearing
+part. Note `(` and `,` are also signature-help triggers; a character may belong to both providers.
+
+**`isIncomplete` was `false`, and the list is position-dependent.** `only_show_types`,
+`inside_block_expr`, `top_level` and `local_scopes` are all computed from the cursor, so a client
+that cached the first response and only re-filtered it client-side was showing a list built for an
+earlier position. It is `true` now, and the handler is cheap enough for that — a warm request costs
+1–3 ms, well inside the budget for re-asking on every keystroke.
+
+**Nothing carried a `sortText`, so the client sorted by label.** That threw away the order the
+handler had gone to some trouble to build, and left `my_function()` at rank 22 of 31 — behind
+`addrspace(...)`, `asm`, `bool`, `break`, `continue`, `else`, `f16`, `f32`, `f64`, `for` — i.e.
+off-screen in a twelve-row widget. A window that *did* open therefore still looked like it was
+offering nothing. `finish()` assigns a zero-padded rank in three groups: bindings from the scopes
+enclosing the cursor, then the module's own declarations, then keywords and primitive types.
+Insertion order is preserved within a group by a `stable_sort`, and the locals span is reversed
+first because the traversal fills `local_scopes` outermost-first while the binding that shadows is
+the innermost one. Every return path goes through `finish()` — the two `std::reverse` calls it
+replaced were dead code, because without a `sortText` the client re-sorted the result anyway.
+
 ### Inlay hints
 
 Type hints and parameter-name hints share the handler.

@@ -43,7 +43,7 @@ ctest --test-dir artic-lsp/buildGcc -E "^thorin_"
 | `config-hints.test.mjs` | Inlay hints on `artic.json`: per-project and per-pattern file counts, and that a healthy config stays out of the Problems panel. |
 | `config-positions.test.mjs` | Where a config diagnostic or hint lands when the value it is about occurs more than once in the document, and where a JSON syntax error lands. |
 | `language-features.test.mjs` | Semantic tokens, type and parameter inlay hints, go-to-definition, find-references. |
-| `completion.test.mjs` | `textDocument/completion`: field and enum-option projection, the `detail` of a generic function, local-scope visibility, and module paths. |
+| `completion.test.mjs` | `textDocument/completion`: field and enum-option projection, the `detail` of a generic function, local-scope visibility, module paths, the declared trigger characters, `isIncomplete`, and the ranking of declarations against keywords. |
 | `signature-help.test.mjs` | `textDocument/signatureHelp`: the rendered label, the parameter spans inside it, the active parameter, and the half-written calls that never reach the AST. |
 | `hover.test.mjs` | `textDocument/hover`: the rendering of every declaration kind, the reported range, and the null cases. |
 | `document-symbols.test.mjs` | `textDocument/documentSymbol`: the outline tree, the symbol kind of each declaration kind, and the two ranges. |

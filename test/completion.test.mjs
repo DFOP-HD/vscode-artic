@@ -130,3 +130,94 @@ describe('completion', () => {
         assert.ok(labels.includes('area'), 'the module function is offered');
     });
 });
+
+// The list is only useful if the editor asks for it and then shows it in the order the
+// server chose. Both were broken independently: the widget opened on `.` and `:` only, so
+// `let a = ` offered nothing at all, and no item carried a `sortText`, so the client fell
+// back to sorting by label and buried every declaration under 30 keywords.
+describe('completion is reachable and ranked', () => {
+    let ws;
+    let client;
+    let uri;
+    let source;
+    let capabilities;
+
+    before(async () => {
+        ws = stageFixture('completion');
+        client = new LspClient(findServerBinary(), { cwd: ws.dir });
+        const result = await client.initialize(ws.uri);
+        capabilities = result.capabilities;
+
+        uri = ws.fileUri('src', 'values.art');
+        source = ws.read('src', 'values.art');
+        client.openDocument(uri, source);
+        await client.waitForDiagnostics(uri);
+    });
+
+    after(async () => {
+        await client?.stop();
+        ws?.cleanup();
+    });
+
+    test('opens where an expression can begin, not just after a projection', async () => {
+        const triggers = capabilities.completionProvider?.triggerCharacters ?? [];
+        for (const c of ['.', ':', '=', ' ', '(', ',', '[']) {
+            assert.ok(triggers.includes(c), `${JSON.stringify(c)} opens the widget`);
+        }
+    });
+
+    test('marks the list incomplete so the client re-asks as the cursor moves', async () => {
+        const { text, position } = withBody(source, '    ');
+        client.changeDocument(uri, text, Date.now());
+        await client.settle(300);
+        const result = await client.request('textDocument/completion', {
+            textDocument: { uri },
+            position,
+        });
+        assert.equal(result.isIncomplete, true);
+    });
+
+    test('ranks declarations above keywords on an unfinished let', async () => {
+        // The user-visible symptom: `let a = ` with a function above it in the file.
+        const { text, position } = withBody(source, '    let a = ');
+        client.changeDocument(uri, text, Date.now());
+        await client.settle(300);
+        const result = await client.request('textDocument/completion', {
+            textDocument: { uri },
+            position,
+        });
+        const items = result.items ?? result;
+
+        for (const item of items) {
+            assert.ok(item.sortText, `${item.label} carries a sortText`);
+        }
+
+        const shown = [...items].sort((a, b) => a.sortText.localeCompare(b.sortText));
+        const rank = (predicate) => shown.findIndex(predicate);
+
+        const identity = rank((i) => i.label.startsWith('identity'));
+        assert.notEqual(identity, -1, 'the function above is offered');
+
+        const keyword = rank((i) => i.kind === 14 /* Keyword */);
+        assert.notEqual(keyword, -1, 'keywords are offered too');
+        assert.ok(identity < keyword,
+            `declaration ranks above the first keyword (${identity} < ${keyword})`);
+    });
+
+    test('ranks a local binding above a module-level declaration', async () => {
+        const { text, position } = withBody(source, '    let local_value = 1;\n    ');
+        client.changeDocument(uri, text, Date.now());
+        await client.settle(300);
+        const result = await client.request('textDocument/completion', {
+            textDocument: { uri },
+            position,
+        });
+        const shown = [...(result.items ?? result)]
+            .sort((a, b) => a.sortText.localeCompare(b.sortText));
+        const local = shown.findIndex((i) => i.label === 'local_value');
+        const global = shown.findIndex((i) => i.label.startsWith('identity'));
+        assert.notEqual(local, -1, 'the local binding is offered');
+        assert.notEqual(global, -1, 'the module function is offered');
+        assert.ok(local < global, `nearest binding first (${local} < ${global})`);
+    });
+});

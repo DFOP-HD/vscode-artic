@@ -52,6 +52,16 @@
         "path": "./syntaxes/artic.tmGrammar.json"
       }
     ],
+    "configurationDefaults": {
+      "[artic]": {
+        "editor.quickSuggestions": {
+          "other": "on",
+          "comments": "off",
+          "strings": "off"
+        },
+        "editor.suggestOnTriggerCharacters": true
+      }
+    },
     "snippets": [
       {
         "language": "artic",

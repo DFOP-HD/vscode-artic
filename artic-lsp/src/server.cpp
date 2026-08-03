@@ -162,7 +162,12 @@ void Server::setup_events_initialization() {
                     .save      = lsp::SaveOptions{ .includeText = false },
                 },
                 .completionProvider = lsp::CompletionOptions{
-                    .triggerCharacters = std::vector<std::string>{".", ":"}
+                    // Anywhere a new expression, type or name can begin. Without these the
+                    // widget only opens where the client decides to ask on its own, which
+                    // leaves `let a = ` -- the place a suggestion is wanted most -- silent.
+                    .triggerCharacters = std::vector<std::string>{
+                        ".", ":", "=", " ", "(", ",", "[", "<", "&", "|", "!"
+                    }
                 },
                 .hoverProvider = true,
                 .signatureHelpProvider = lsp::SignatureHelpOptions{
@@ -1046,9 +1051,37 @@ void Server::setup_events_completion() {
         };
 
         lsp::CompletionList result{
-            .isIncomplete = false,
+            // The list depends on the cursor: which scopes are open, whether a type or an
+            // expression is expected, whether this is a projection. A client that cached it
+            // would go on filtering a list built for an earlier position.
+            .isIncomplete = true,
             .items = {},
             .itemDefaults = lsp::CompletionListItemDefaults{ .insertTextFormat = lsp::InsertTextFormat::Snippet },
+        };
+
+        // Index of the first item collected from a scope enclosing the cursor. Everything
+        // before it is a module-level declaration, which is further away.
+        size_t locals_begin = std::numeric_limits<size_t>::max();
+
+        // A client sorts by `sortText`, falling back to the label, so an ordering that is
+        // not spelled out here is simply replaced by an alphabetical one -- which buries
+        // every declaration in scope under the keywords. Nearest bindings first, then the
+        // module's own declarations, then keywords; insertion order within each group.
+        auto finish = [&]() -> lsp::CompletionList& {
+            std::vector<size_t> order(result.items.size());
+            for (size_t i = 0; i < order.size(); ++i) order[i] = i;
+            auto group = [&](size_t i) {
+                if (result.items[i].kind == lsp::CompletionItemKind::Keyword) return 2;
+                return i >= locals_begin ? 0 : 1;
+            };
+            std::stable_sort(order.begin(), order.end(),
+                [&](size_t a, size_t b) { return group(a) < group(b); });
+            for (size_t rank = 0; rank < order.size(); ++rank) {
+                auto key = std::to_string(rank);
+                result.items[order[rank]].sortText =
+                    std::string(key.size() < 6 ? 6 - key.size() : 0, '0') + key;
+            }
+            return result;
         };
 
         ast::Node::TraverseFn traverse([&](const ast::Node& node) -> bool {
@@ -1126,7 +1159,7 @@ void Server::setup_events_completion() {
                     log::info("type could not be identified");
                 }
                 log::info("{} projection items", result.items.size());
-                return result;
+                return finish();
             } 
             // 2. Path expression: a::b
             if(const auto* path = inner_node->isa<ast::Path>(); path && path->elems.size() > 1) {
@@ -1139,7 +1172,6 @@ void Server::setup_events_completion() {
 
                 // Element type cannot be resolved -> no completion
                 if(!path_elem->type) return result;
-                
                 auto path_module = current_module;
                 if(const auto* mod = path_elem->type->isa<ModType>()) path_module = &mod->decl;
 
@@ -1151,8 +1183,7 @@ void Server::setup_events_completion() {
                         if(auto item = completion_item(*named_decl)) result.items.push_back(std::move(*item));
                     }
                 }
-                std::reverse(result.items.begin(), result.items.end());
-                return result;
+                return finish();
             }
         }
         
@@ -1233,6 +1264,7 @@ void Server::setup_events_completion() {
         }
 
         if (inside_block_expr){
+            locals_begin = result.items.size();
             // Declarations in local scope
             ast::Node::TraverseFn collect_local_decls([&](const ast::Node& node) -> bool {
                 // Every scope that encloses the cursor is already a `local_scopes` entry of
@@ -1255,6 +1287,9 @@ void Server::setup_events_completion() {
             for (const auto* scope : local_scopes) {
                 collect_local_decls(*scope);
             }
+            // `local_scopes` is filled outermost-first by the traversal above, but the
+            // binding that shadows is the innermost one, so it is the one to offer first.
+            std::reverse(result.items.begin() + locals_begin, result.items.end());
 
             // Local snippets
             if(!only_show_types){
@@ -1363,8 +1398,7 @@ void Server::setup_events_completion() {
             });
         }
 
-        std::reverse(result.items.begin(), result.items.end());
-        return result;
+        return finish();
     });
 }
 
