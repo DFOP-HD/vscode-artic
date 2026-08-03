@@ -45,7 +45,7 @@ ctest --test-dir artic-lsp/buildGcc -E "^thorin_"
 | `signature-help.test.mjs` | `textDocument/signatureHelp`: the rendered label, the parameter spans inside it, the active parameter, and the half-written calls that never reach the AST. |
 | `hover.test.mjs` | `textDocument/hover`: the rendering of every declaration kind, the reported range, and the null cases. |
 | `document-symbols.test.mjs` | `textDocument/documentSymbol`: the outline tree, the symbol kind of each declaration kind, and the two ranges. |
-| `navigation.test.mjs` | `textDocument/definition` (on a declaration as well as a reference), `documentHighlight`, `typeDefinition` and `selectionRange`. |
+| `navigation.test.mjs` | `textDocument/definition` (on a declaration as well as a reference), `documentHighlight`, `typeDefinition`, `implementation` and `selectionRange`. |
 | `did-close.test.mjs` | `textDocument/didClose`: the closed document's diagnostics are withdrawn and its unsaved buffer is discarded. |
 | `path-identity.test.mjs` | The same features when the file is reached through a `.vcxproj` that spells the path differently from the editor. |
 | `sln-config.test.mjs` | `.sln` files listed in `include`, including the noise a CMake-generated solution brings with it. |

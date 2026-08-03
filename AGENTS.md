@@ -512,11 +512,23 @@ is the reference for what else a server can advertise.
     `ModType`, each of which carries a `decl`. A primitive resolves to nothing and the
     handler answers `null` rather than guessing. Guarded by
     [test/navigation.test.mjs](test/navigation.test.mjs).
-15. **Go to implementation for implicits / `summon`** — jump from a summoned implicit to the
-    instance the `Summoner` actually selected. Genuinely novel for Artic, and not obtainable
-    from `NameMap` alone: the Summoner has to record its choice. That is a fork change and is
-    therefore subject to the `ENABLE_LSP` policy above — if the choice cannot be recorded
-    behind a clean guard, drop the item rather than weaken the guard.
+15. **Go to implementation for implicits / `summon`** — *done, with no fork change at all*.
+    `TextDocument_Implementation` is registered in `setup_events_definitions()` and
+    `implementationProvider` is advertised. The item was scoped on the assumption that the
+    Summoner would have to be taught to record its choice; it already does. `ast::SummonExpr`
+    carries an **upstream, unguarded** `const Expr* resolved`, assigned in
+    `SummonExpr::resolve_summons` from `Summoner::resolve`, and `emit.cpp` and `print.cpp`
+    both rely on it — so the `ENABLE_LSP` question never arose.
+    `summon_at()` in [artic-lsp/src/server.cpp](artic-lsp/src/server.cpp) finds the innermost
+    `SummonExpr` covering the cursor and answers with `resolved->loc`. Two things worth
+    knowing: **an omitted implicit argument is a `SummonExpr` too** — `TypeChecker::coerce`
+    synthesises one per `ImplicitParamType` in the callee's parameter tuple, so `apply(v)`
+    resolves even though nothing in it is written down; and that synthesised node **inherits
+    the argument's location**, so the cursor has to be inside the parentheses rather than on
+    the callee. An implicit *parameter* resolves to the `PathExpr` that `IdPtrn::to_expr()`
+    synthesises, which carries the pattern's own location, so that case lands on real source
+    too. Guarded by [test/navigation.test.mjs](test/navigation.test.mjs) against
+    [test/fixtures/navigation/src/implicits.art](test/fixtures/navigation/src/implicits.art).
 16. **Workspace symbols (Ctrl+T)** — needs an index spanning every project in the config, not
     just the active one. Blocked on the server holding a single `std::optional<Compiler>`;
     deciding how to index without keeping every project compiled is the actual work here.

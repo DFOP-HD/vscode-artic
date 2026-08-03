@@ -17,6 +17,7 @@ non-technical problems.
 - Hover: declaration signature and inferred type
 - Go to definition and find references
 - Go to type definition
+- Go to implementation, resolving a summoned implicit to the instance the compiler picked
 - Document highlight: every occurrence of the symbol under the cursor
 - Document symbols: outline view, breadcrumbs and Ctrl+Shift+O
 - Expand and shrink selection along the syntax tree (Shift+Alt+Right / Left)

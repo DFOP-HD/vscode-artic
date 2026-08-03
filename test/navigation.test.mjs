@@ -20,6 +20,7 @@ describe('navigation', () => {
 
     const shapes = {};
     const uses = {};
+    const implicits = {};
 
     const request = (method, doc, needle, occurrence = 1) => client.request(method, {
         textDocument: { uri: doc.uri },
@@ -37,7 +38,7 @@ describe('navigation', () => {
         client = new LspClient(findServerBinary(), { cwd: ws.dir });
         initResult = await client.initialize(ws.uri);
 
-        for (const [handle, name] of [[shapes, 'shapes.art'], [uses, 'uses.art']]) {
+        for (const [handle, name] of [[shapes, 'shapes.art'], [uses, 'uses.art'], [implicits, 'implicits.art']]) {
             handle.uri = ws.fileUri('src', name);
             handle.path = ws.path('src', name);
             handle.text = ws.read('src', name);
@@ -54,6 +55,7 @@ describe('navigation', () => {
     test('the server advertises the new navigation capabilities', () => {
         assert.equal(initResult.capabilities.documentHighlightProvider, true);
         assert.equal(initResult.capabilities.typeDefinitionProvider, true);
+        assert.equal(initResult.capabilities.implementationProvider, true);
         assert.equal(initResult.capabilities.selectionRangeProvider, true);
     });
 
@@ -151,6 +153,28 @@ describe('navigation', () => {
 
     test('type definition answers null where nothing is named', async () => {
         assert.equal(await request('textDocument/typeDefinition', shapes, 'struct'), null);
+    });
+
+    // ------------------------------------------------------------- implementation
+
+    test('implementation of an omitted implicit argument resolves the instance', async () => {
+        // Nothing in `apply(v)` names the implicit; the Summoner chose it, and its choice is
+        // the only thing that can answer this request. The synthesised SummonExpr carries the
+        // argument list's location, so the cursor has to be inside the parentheses.
+        const locations = asLocations(await request('textDocument/implementation', implicits, 'v)'));
+        assert.equal(locations.length, 1);
+        assert.ok(samePath(uriToPath(locations[0].uri), implicits.path));
+        assert.deepEqual(locations[0].range.start, locate(implicits.text, 'Factor { value = 7 }'));
+    });
+
+    test('implementation of an explicit summon resolves the same instance', async () => {
+        const locations = asLocations(await request('textDocument/implementation', implicits, 'summon[Factor]'));
+        assert.equal(locations.length, 1);
+        assert.deepEqual(locations[0].range.start, locate(implicits.text, 'Factor { value = 7 }'));
+    });
+
+    test('implementation answers null where no implicit is summoned', async () => {
+        assert.equal(await request('textDocument/implementation', shapes, 'scale(v: Vec2'), null);
     });
 
     // ------------------------------------------------------------ selection range

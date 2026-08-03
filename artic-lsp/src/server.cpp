@@ -146,6 +146,7 @@ void Server::setup_events_initialization() {
                 },
                 .definitionProvider = true,
                 .typeDefinitionProvider = true,
+                .implementationProvider = true,
                 .referencesProvider = true,
                 .documentHighlightProvider = true,
                 .documentSymbolProvider = true,
@@ -581,6 +582,22 @@ const ast::NamedDecl* declaring_type_decl(const Type* type) {
     return nullptr;
 }
 
+/// The innermost `SummonExpr` covering the cursor, or null. An implicit argument the caller
+/// never wrote is a `SummonExpr` too, synthesised by the type checker with the argument
+/// list's location, so a cursor inside `the_answer()` finds the implicit it receives.
+const ast::SummonExpr* summon_at(const ast::ModDecl& program, const Loc& cursor) {
+    const ast::SummonExpr* found = nullptr;
+    ast::Node::TraverseFn visit([&](const ast::Node& node) {
+        const auto& loc = node.loc;
+        if (!loc.file || !cursor.file || *loc.file != *cursor.file) return false;
+        if (cursor.begin < loc.begin || loc.end < cursor.begin) return false;
+        if (auto summon = node.isa<ast::SummonExpr>()) found = summon;
+        return true;
+    });
+    for (const auto& decl : program.decls) if (decl) decl->traverse(visit);
+    return found;
+}
+
 std::optional<IdentifierOccurrences> find_occurrences_of_identifier(const ls::NameMap& name_map, const Loc& cursor) {
     Loc cursor_range;
     const ast::NamedDecl* target_decl = name_map.find_decl_at(cursor);
@@ -716,6 +733,28 @@ void Server::setup_events_definitions() {
 
         log::info("[LSP] >>> TypeDefinition '{}' -> '{}'", decl->id.name, type_decl->id.name);
         return lsp::Definition(to_location(type_decl->id.loc));
+    });
+
+    message_handler_.add<reqst::TextDocument_Implementation>([this](reqst::TextDocument_Implementation::Params&& params) -> reqst::TextDocument_Implementation::Result {
+        log_request("TextDocument Implementation", params.textDocument, params.position);
+
+        if(get_file_type(params.textDocument.uri.path()) != FileType::SourceFile) return nullptr;
+        ensure_compile(params.textDocument.uri.path());
+        if(!compile || !compile->program) return nullptr;
+        auto cursor = to_loc(params.textDocument, params.position);
+
+        // Implicits are the one thing in artic whose target is decided by the compiler
+        // rather than written down, so this is where "go to implementation" earns its name.
+        // `Summoner::resolve` already records its choice in `SummonExpr::resolved`.
+        const ast::SummonExpr* summon = summon_at(*compile->program, cursor);
+        if(!summon || !summon->resolved) {
+            log::info("[LSP] >>> Implementation found no summoned implicit at cursor");
+            return nullptr;
+        }
+
+        auto loc = to_location(summon->resolved->loc);
+        log::info("[LSP] >>> Implementation {}:{}:{}", loc.uri.path(), loc.range.start.line + 1, loc.range.start.character + 1);
+        return lsp::Definition(loc);
     });
 
     message_handler_.add<reqst::TextDocument_DocumentHighlight>([this](reqst::TextDocument_DocumentHighlight::Params&& params) -> reqst::TextDocument_DocumentHighlight::Result {

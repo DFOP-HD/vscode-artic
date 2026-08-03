@@ -1,0 +1,22 @@
+// Fixture: an implicit whose instance the Summoner picks. Nothing in the source refers to
+// it, so go-to-implementation is the only way to reach it.
+// Written for this repository - do not replace with code from other AnyDSL projects.
+
+struct Factor {
+    value: i32
+}
+
+implicit Factor = Factor { value = 7 };
+
+fn apply(v: i32, implicit f: Factor) -> i32 {
+    v * f.value
+}
+
+fn scaled(v: i32) -> i32 {
+    apply(v)
+}
+
+fn summoned() -> i32 {
+    let f = summon[Factor];
+    f.value
+}
