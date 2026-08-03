@@ -120,6 +120,24 @@ diagnostics were tested. Any change touching path handling, the workspace or the
 cache must be covered by [test/language-features.test.mjs](test/language-features.test.mjs)
 and [test/path-identity.test.mjs](test/path-identity.test.mjs).
 
+**Valid source is not enough coverage either.** The editor spends most of its time on a
+buffer that does not parse, and the compiler is error-tolerant on purpose:
+`Compiler::compile_files` keeps the partially parsed AST (`exclude_non_parsed_files` is
+`false` outside safe mode) and still runs the name binder, the type checker and the
+summoner over it, so `name_map` is populated for everything that did parse. Go-to-definition,
+completion, hover, the outline and semantic tokens all depend on that and are guarded by
+[test/incomplete-code.test.mjs](test/incomplete-code.test.mjs) — flipping
+`exclude_non_parsed_files` to `true` fails seven of its ten cases. The broken state is
+injected with `changeDocument()` so the fixture on disk stays valid and keeps its
+`fixtures.test.mjs` coverage.
+
+[test/latency.test.mjs](test/latency.test.mjs) is a guard against complexity regressions,
+not a benchmark: it generates a multi-file project and asserts that a warm request stays
+far below a `didChange` round trip measured in the same run. On this machine an edit costs
+~19 ms and every warm request 1–3 ms. That ratio is what catches a request that starts
+recompiling — the double-compile bug in the file-identity gotcha below was invisible to
+every correctness test.
+
 **All `.art` / `.impala` fixture code must be written by us** — never copied from other
 AnyDSL repos (licensing). Sample projects such as `D:/anydsl-metaproject/stincilla` may be
 read for reference only. Every fixture that is supposed to be valid must be proven valid

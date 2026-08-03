@@ -48,6 +48,8 @@ ctest --test-dir artic-lsp/buildGcc -E "^thorin_"
 | `document-symbols.test.mjs` | `textDocument/documentSymbol`: the outline tree, the symbol kind of each declaration kind, and the two ranges. |
 | `workspace-symbols.test.mjs` | `workspace/symbol` across every project in the config, and the reference-count code lens. |
 | `navigation.test.mjs` | `textDocument/definition` (on a declaration as well as a reference), `documentHighlight`, `typeDefinition`, `implementation` and `selectionRange`. |
+| `incomplete-code.test.mjs` | The same features while the buffer does not compile: go-to-definition and completion on a half-written call, and the outline, hover and semantic tokens of a partially parsed file. |
+| `latency.test.mjs` | How long the requests an editor issues while typing take, against a generated multi-file project. |
 | `did-close.test.mjs` | `textDocument/didClose`: the closed document's diagnostics are withdrawn and its unsaved buffer is discarded. |
 | `path-identity.test.mjs` | The same features when the file is reached through a `.vcxproj` that spells the path differently from the editor. |
 | `sln-config.test.mjs` | `.sln` files listed in `include`, including the noise a CMake-generated solution brings with it. |
@@ -91,6 +93,26 @@ projects silently do not exist.
 A config diagnostic is published at **every** textual occurrence of its context
 string in the file, so one logical error can produce several diagnostics. Compare
 distinct messages rather than counting entries.
+
+### Testing against code that does not compile
+
+An editor spends most of its time on source that is mid-edit, so a feature that
+only works on valid code is broken in practice. Drive the broken state through
+`changeDocument()` rather than committing an invalid fixture — the fixture stays
+valid (and therefore stays covered by `fixtures.test.mjs`), and the test shows
+exactly which keystroke it is simulating.
+
+Such a suite must **assert that the buffer really is broken**, otherwise it can
+silently degrade into a second copy of the valid-source tests.
+
+### Latency
+
+`latency.test.mjs` is a guard, not a benchmark. Absolute budgets are loose enough
+that only an order-of-magnitude regression trips them; the assertion with teeth is
+the relative one, comparing a warm request against a `didChange` round trip
+**measured in the same run**. A request answered from the last compile must not
+recompile, and that ratio holds on any machine. `ARTIC_LSP_WARM_BUDGET_MS` and
+`ARTIC_LSP_EDIT_BUDGET_MS` raise the absolute ceilings if a runner needs it.
 
 ## Fixture rules
 
