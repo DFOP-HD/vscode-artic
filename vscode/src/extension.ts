@@ -307,6 +307,21 @@ export function activate(context: vscode.ExtensionContext) {
         }
     });
     context.subscriptions.push(detectConfigCommand);
+
+    // Invoked by the reference-count code lens the server emits. The lens carries a plain
+    // URI and line/character, because the language client passes command arguments through
+    // unconverted and `editor.action.showReferences` needs real vscode objects.
+    const showReferencesCommand = vscode.commands.registerCommand(
+        'artic.showReferences',
+        async (uri: string, line: number, character: number) => {
+            const target = vscode.Uri.parse(uri);
+            const position = new vscode.Position(line, character);
+            const locations = await vscode.commands.executeCommand<vscode.Location[]>(
+                'vscode.executeReferenceProvider', target, position);
+            await vscode.commands.executeCommand(
+                'editor.action.showReferences', target, position, locations ?? []);
+        });
+    context.subscriptions.push(showReferencesCommand);
 }
 
 export function deactivate(): Thenable<void> | undefined {

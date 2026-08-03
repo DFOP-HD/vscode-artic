@@ -5,6 +5,9 @@
 #include "artic/log.h"
 #include "artic/print.h"
 
+#include <lsp/types.h>
+
+#include <optional>
 #include <sstream>
 #include <string>
 
@@ -27,6 +30,11 @@ void print_param_list(Printer& printer, const Type& dom);
 
 /// Renders a declaration the way it is written in source, but without its body.
 std::string render_decl(const ast::NamedDecl& decl);
+
+/// The outline kind of a declaration, or nothing for declarations that do not belong in
+/// an outline at all (`let`, `use`, and anything the parser could not make sense of).
+/// Shared by document symbols, workspace symbols and code lens, so they cannot disagree.
+std::optional<lsp::SymbolKind> symbol_kind_of(const ast::Decl& decl);
 
 } // namespace artic::ls
 

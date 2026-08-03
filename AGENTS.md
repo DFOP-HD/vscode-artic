@@ -28,7 +28,8 @@ one of the utility modules, so a handler stays readable:
 | `paths.h` / `paths.cpp` | `artic::ls::paths` | Everything that turns a path or URI into a file identity: `canonical_path`, `lookup_key`, `to_absolute_path`, `from_msbuild_path`, `read_file`. **The only legitimate source of a lookup key** — see the file-identity gotcha below. |
 | `text.h` | `artic::ls::text` | Header-only string helpers: `to_lower`, `trim_left`, `strip_quotes`, `split_whitespace`, `quote`. |
 | `lsp_convert.h` / `.cpp` | `artic::ls` | Conversions between artic's `Loc`/`Severity`/`Diagnostic` and the `lsp::` protocol types, plus `contains(range, position)`. |
-| `ast_render.h` / `.cpp` | `artic::ls` | Turning AST nodes into display strings: `print_to_string`, `print_param_list`, `render_decl`. Hover, document symbols and completion all render through here so they cannot disagree. |
+| `ast_render.h` / `.cpp` | `artic::ls` | Turning AST nodes into display strings: `print_to_string`, `print_param_list`, `render_decl`, and the `symbol_kind_of` mapping. Hover, document symbols, workspace symbols, code lens and completion all render through here so they cannot disagree. |
+| `symbol_index.{h,cpp}` | `artic::ls` | The parse-only, per-project declaration index behind `workspace/symbol`. |
 | `workspace.{h,cpp}` | `artic::ls::workspace` | Config discovery, the project registry, file tracking. |
 | `config.{h,cpp}` | `artic::ls::config` | Parsing `artic.json`, `.artic-lsp`, `.vcxproj`, `.sln`, `build.ninja`, and `ConfigLog`. |
 | `compile.{h,cpp}` | `artic::ls` | Driving `libartic` and holding the resulting AST, `Locator` and `NameMap`. |
@@ -529,11 +530,39 @@ is the reference for what else a server can advertise.
     synthesises, which carries the pattern's own location, so that case lands on real source
     too. Guarded by [test/navigation.test.mjs](test/navigation.test.mjs) against
     [test/fixtures/navigation/src/implicits.art](test/fixtures/navigation/src/implicits.art).
-16. **Workspace symbols (Ctrl+T)** — needs an index spanning every project in the config, not
-    just the active one. Blocked on the server holding a single `std::optional<Compiler>`;
-    deciding how to index without keeping every project compiled is the actual work here.
-    **Code lens** (reference counts above declarations) is cheap once that index exists, so
-    schedule the two together.
+16. **Workspace symbols (Ctrl+T) and code lens** — *done*. `workspaceSymbolProvider` and
+    `codeLensProvider` are advertised and handled in `setup_events_symbols()`.
+    The blocker was the server holding a single `std::optional<Compiler>`. It is sidestepped
+    rather than removed: **the index parses, it does not compile.** `SymbolIndex` in
+    [artic-lsp/src/symbol_index.cpp](artic-lsp/src/symbol_index.cpp) runs `Lexer` + `Parser`
+    over each project's own files and copies out name, container path, kind and location.
+    Name binding, type checking and summoning are what make a compile expensive and none of
+    them contributes anything a symbol picker shows.
+    Three things it has to get right. **Everything the harvest sees dies with it**: the
+    `Arena` holding the AST and the `Locator` owning every `Loc::file` string are both local
+    to `harvest_file()`, so an `IndexedSymbol` may keep no pointer into either — the
+    `lsp::Location` is built from `File::path` while they are still alive. **Parse errors go
+    to a `std::ostream(nullptr)`**, because the index runs over files that are usually
+    mid-edit and their diagnostics are the compile's business. And **the result is cached per
+    project**, because a client re-issues `workspace/symbol` on every keystroke;
+    `SymbolIndex::invalidate()` drops every project containing a changed file, and any
+    `on_config_changed` / `reload_workspace` throws the whole index away, since it is keyed
+    by project name and those names have just been re-instantiated.
+    Only a project's **own** files are indexed — a dependency is a project in its own right
+    and is indexed there, so following the edges would report every shared symbol twice.
+    **Code lens** counts `name_map.find_refs(decl)` above each `fn`, `struct`, `enum`,
+    `type`, `static` and `mod`. Fields and enum options are deliberately left out: a lens per
+    struct field turns a record into a ladder of grey text. The count is scoped to the
+    declaration's own project, because that is what the file's compile covers.
+    **The lens command carries a URI string and two integers, not LSP objects**, because
+    `vscode-languageclient` passes command arguments through unconverted;
+    `artic.showReferences` in [vscode/src/extension.ts](vscode/src/extension.ts) rebuilds a
+    `vscode.Uri`/`vscode.Position` and forwards to `editor.action.showReferences`. It is
+    registered in code only, not in `contributes.commands`, so it stays out of the palette.
+    `symbol_kind_of()` moved from `server.cpp` into
+    [artic-lsp/src/ast_render.cpp](artic-lsp/src/ast_render.cpp) so document symbols,
+    workspace symbols and code lens cannot disagree about what a declaration is.
+    Guarded by [test/workspace-symbols.test.mjs](test/workspace-symbols.test.mjs).
 17. **Parameter-name inlay hints** — *done*. `collect_parameter_hints()` in
     [artic-lsp/src/server.cpp](artic-lsp/src/server.cpp) walks the program with a `TraverseFn`
     that prunes anything outside the requested document, resolves every `CallExpr`'s callee

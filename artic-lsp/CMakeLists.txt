@@ -37,6 +37,7 @@ add_executable(artic-lsp
     include/lsp_convert.h
     include/paths.h
     include/server.h
+    include/symbol_index.h
     include/text.h
     include/workspace.h
     src/ast_render.cpp
@@ -47,6 +48,7 @@ add_executable(artic-lsp
     src/config.cpp
     src/lsp_convert.cpp
     src/paths.cpp
+    src/symbol_index.cpp
 )
 
 # Not EXCLUDE_FROM_ALL: the standalone `artic` binary is needed to validate fixtures and

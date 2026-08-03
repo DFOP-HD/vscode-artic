@@ -11,6 +11,7 @@
 #include <lsp/messagehandler.h>
 #include <lsp/messagebase.h>
 #include "compile.h"
+#include "symbol_index.h"
 
 namespace artic::ls {
 
@@ -36,6 +37,7 @@ private:
         setup_events_completion();
         setup_events_signature_help();
         setup_events_selection_range();
+        setup_events_symbols();
     }
     void setup_events_initialization();
     void setup_events_modifications();
@@ -44,6 +46,7 @@ private:
     void setup_events_completion();
     void setup_events_signature_help();
     void setup_events_selection_range();
+    void setup_events_symbols();
     void setup_events_other();
 
     void send_message(const std::string& message, lsp::MessageType type);
@@ -70,6 +73,10 @@ private:
     // Project management
     std::unique_ptr<workspace::Workspace> workspace_;
     std::optional<Compiler> compile;
+
+    // Declarations of every project, harvested by parsing alone. Answers `workspace/symbol`
+    // without keeping a compiler alive per project.
+    SymbolIndex symbol_index_;
 
     // Files that currently show config diagnostics, so they can be cleared once
     // the config is fixed. The editor keeps the last published set otherwise.

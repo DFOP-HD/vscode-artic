@@ -169,6 +169,22 @@ size_t Workspace::total_file_count(const Project& project) const {
     return files.size();
 }
 
+std::vector<const Project*> Workspace::all_projects() const {
+    std::vector<const Project*> result;
+    result.reserve(projects_.size());
+    for (const auto& [name, project] : projects_) {
+        (void)name;
+        result.push_back(project.get());
+    }
+    return result;
+}
+
+const std::string* Workspace::file_text(const fs::path& file) {
+    auto f = tracked_file(file);
+    f->read();
+    return f->text ? &*f->text : nullptr;
+}
+
 std::unordered_set<File*> Workspace::files_for_project(const Project& project) {
     std::unordered_set<File*> res;
     for (const auto& f : project.files) {

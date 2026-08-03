@@ -1,0 +1,31 @@
+// Fixture: one declaration of every kind a symbol picker has to find, plus references
+// whose count a code lens reports.
+// Written for this repository - do not replace with code from other AnyDSL projects.
+
+struct Point {
+    x: i32,
+    y: i32
+}
+
+enum Shape {
+    Dot(Point),
+    Segment(Point, Point)
+}
+
+type Length = i32;
+
+static origin = Point { x = 0, y = 0 };
+
+fn manhattan(p: Point) -> Length {
+    p.x + p.y
+}
+
+fn double_manhattan(p: Point) -> Length {
+    manhattan(p) + manhattan(p)
+}
+
+mod inner {
+    fn helper() -> i32 {
+        1
+    }
+}

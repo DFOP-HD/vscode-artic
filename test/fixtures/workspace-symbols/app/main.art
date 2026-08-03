@@ -1,0 +1,7 @@
+// Fixture: a second project, so the workspace index has to span more than the one the
+// active file belongs to.
+// Written for this repository - do not replace with code from other AnyDSL projects.
+
+fn total() -> Length {
+    manhattan(origin) + manhattan(Point { x = 1, y = 2 })
+}

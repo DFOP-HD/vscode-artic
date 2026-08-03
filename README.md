@@ -26,6 +26,8 @@ non-technical problems.
 - Signature help while typing a call
 - Inlay hints for inferred types and for the parameters a call's arguments bind
 - Inlay hints on `artic.json` showing how many files each project and each pattern resolves to
+- Workspace symbol search (Ctrl+T) across every project the configuration declares
+- Code lens with the number of references above each declaration
 - Semantic highlighting on top of the TextMate grammar
 - Snippets for loops, function declarations and other common constructs
 - Diagnostics for the `artic.json` configuration file itself

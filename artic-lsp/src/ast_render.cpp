@@ -88,4 +88,18 @@ std::string render_decl(const ast::NamedDecl& decl) {
     return oss.str();
 }
 
+std::optional<lsp::SymbolKind> symbol_kind_of(const ast::Decl& decl) {
+    if (decl.isa<ast::ModDecl>())      return lsp::SymbolKind::Module;
+    if (decl.isa<ast::FnDecl>())       return lsp::SymbolKind::Function;
+    if (decl.isa<ast::StructDecl>())   return lsp::SymbolKind::Struct;
+    if (decl.isa<ast::EnumDecl>())     return lsp::SymbolKind::Enum;
+    if (decl.isa<ast::OptionDecl>())   return lsp::SymbolKind::EnumMember;
+    if (decl.isa<ast::FieldDecl>())    return lsp::SymbolKind::Field;
+    if (decl.isa<ast::TypeDecl>())     return lsp::SymbolKind::TypeParameter;
+    if (decl.isa<ast::ImplicitDecl>()) return lsp::SymbolKind::Constant;
+    if (auto static_decl = decl.isa<ast::StaticDecl>())
+        return static_decl->is_mut ? lsp::SymbolKind::Variable : lsp::SymbolKind::Constant;
+    return std::nullopt;
+}
+
 } // namespace artic::ls

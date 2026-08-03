@@ -150,6 +150,10 @@ void Server::setup_events_initialization() {
                 .referencesProvider = true,
                 .documentHighlightProvider = true,
                 .documentSymbolProvider = true,
+                .codeLensProvider = lsp::CodeLensOptions{
+                    .resolveProvider = false
+                },
+                .workspaceSymbolProvider = true,
                 .renameProvider = lsp::RenameOptions {
                     .prepareProvider = true
                 },
@@ -220,6 +224,7 @@ void Server::setup_events_modifications() {
         // Other documents may still be reported broken because of edits that no longer
         // exist, so the project has to be rebuilt from what is on disk.
         if(workspace_->discard_editor_buffer(path)) {
+            symbol_index_.invalidate(path);
             compile.reset();
             compile_this_and_related_files(path);
         }
@@ -242,6 +247,9 @@ void Server::setup_events_modifications() {
         } else {
             workspace::config::ConfigLog log{};
             bool known = workspace_->on_config_changed(path, log);
+            // `on_config_changed` re-instantiates every project, so anything the index
+            // cached under a project name now describes a project that no longer exists.
+            symbol_index_ = SymbolIndex{};
             if(known) compile.reset();
             publish_config_diagnostics(log);
         }
@@ -257,6 +265,7 @@ void Server::setup_events_modifications() {
         }
 
         auto& content = std::get<lsp::TextDocumentContentChangeEvent_Text>(params.contentChanges[0]).text;
+        symbol_index_.invalidate(file);
         compile_this_and_related_files(file, &content);
     });
 
@@ -266,6 +275,7 @@ void Server::setup_events_modifications() {
         if(get_file_type(file) == FileType::ConfigFile) {
             workspace::config::ConfigLog log{};
             bool known = workspace_->on_config_changed(file, log);
+            symbol_index_ = SymbolIndex{};
             if(known) compile.reset();
             publish_config_diagnostics(log);
             return;
@@ -480,22 +490,6 @@ struct IdentifierOccurrences {
     lsp::Location cursor_range;
     lsp::Location declaration_range;
 };
-
-/// The outline kind of a declaration, or nothing for declarations that do not belong in
-/// the outline at all (`let`, `use`, and anything the parser could not make sense of).
-std::optional<lsp::SymbolKind> symbol_kind_of(const ast::Decl& decl) {
-    if (decl.isa<ast::ModDecl>())      return lsp::SymbolKind::Module;
-    if (decl.isa<ast::FnDecl>())       return lsp::SymbolKind::Function;
-    if (decl.isa<ast::StructDecl>())   return lsp::SymbolKind::Struct;
-    if (decl.isa<ast::EnumDecl>())     return lsp::SymbolKind::Enum;
-    if (decl.isa<ast::OptionDecl>())   return lsp::SymbolKind::EnumMember;
-    if (decl.isa<ast::FieldDecl>())    return lsp::SymbolKind::Field;
-    if (decl.isa<ast::TypeDecl>())     return lsp::SymbolKind::TypeParameter;
-    if (decl.isa<ast::ImplicitDecl>()) return lsp::SymbolKind::Constant;
-    if (auto static_decl = decl.isa<ast::StaticDecl>())
-        return static_decl->is_mut ? lsp::SymbolKind::Variable : lsp::SymbolKind::Constant;
-    return std::nullopt;
-}
 
 template <typename Decls>
 void collect_document_symbols(
@@ -1712,6 +1706,7 @@ void Server::reload_workspace() {
     log::info("Reloading workspace configuration");
     workspace::config::ConfigLog log;
     workspace_->reload();
+    symbol_index_ = SymbolIndex{};
     publish_config_diagnostics(log);
     
     // Recompile last compile
@@ -1980,6 +1975,104 @@ void collect_config_hints(
 }
 
 } // anonymous namespace
+
+
+// -----------------------------------------------------------------------------
+//
+//
+// Workspace Symbols and Code Lens
+//
+//
+// -----------------------------------------------------------------------------
+// Symbol Helper Functions
+namespace {
+
+/// A client that opens the picker with an empty query asks for everything there is, and a
+/// large workspace has more of it than anyone scrolls through.
+constexpr size_t max_workspace_symbols = 1000;
+
+/// Declarations worth a reference count above them. Fields and enum options are left out:
+/// a lens per struct field turns a record into a ladder of grey text.
+bool deserves_code_lens(const ast::Decl& decl) {
+    return decl.isa<ast::FnDecl>()
+        || decl.isa<ast::StructDecl>()
+        || decl.isa<ast::EnumDecl>()
+        || decl.isa<ast::TypeDecl>()
+        || decl.isa<ast::StaticDecl>()
+        || decl.isa<ast::ModDecl>();
+}
+
+void collect_code_lenses(
+    const ast::ModDecl& program,
+    const ls::NameMap& name_map,
+    const std::string& file,
+    const lsp::FileUri& uri,
+    lsp::Array<lsp::CodeLens>& out)
+{
+    ast::Node::TraverseFn visit([&](const ast::Node& node) {
+        // The program is every file of the project concatenated, so anything outside the
+        // requested document is pruned rather than walked.
+        if (!node.loc.file || *node.loc.file != file) return false;
+        auto decl = node.isa<ast::Decl>();
+        if (!decl || !deserves_code_lens(*decl)) return true;
+        auto named = decl->isa<ast::NamedDecl>();
+        if (!named) return true;
+
+        auto count = name_map.find_refs(named).size();
+        lsp::CodeLens lens;
+        lens.range = to_range(named->id.loc);
+        // Registered by the extension, which turns the position into the peek view.
+        // A lens without a command would render as unclickable grey text.
+        lsp::LSPArray arguments;
+        arguments.push_back(lsp::json::String(uri.toString()));
+        arguments.push_back(lsp::json::Integer(lens.range.start.line));
+        arguments.push_back(lsp::json::Integer(lens.range.start.character));
+        lens.command = lsp::Command{
+            .title = count == 1 ? "1 reference" : std::to_string(count) + " references",
+            .command = "artic.showReferences",
+            .arguments = std::move(arguments),
+        };
+        out.push_back(std::move(lens));
+        return true;
+    });
+    for (const auto& decl : program.decls) if (decl) decl->traverse(visit);
+}
+
+} // anonymous namespace
+
+void Server::setup_events_symbols() {
+
+    message_handler_.add<reqst::Workspace_Symbol>([this](reqst::Workspace_Symbol::Params&& params) -> reqst::Workspace_Symbol::Result {
+        log::info("\n[LSP] <<< Workspace Symbol '{}'", params.query);
+
+        lsp::Array<lsp::SymbolInformation> symbols;
+        for (const auto* symbol : symbol_index_.find(*workspace_, params.query, max_workspace_symbols)) {
+            lsp::SymbolInformation info;
+            info.name = symbol->name;
+            info.kind = lsp::SymbolKindEnum(symbol->kind);
+            if (!symbol->container.empty()) info.containerName = symbol->container;
+            info.location = symbol->location;
+            symbols.push_back(std::move(info));
+        }
+        log::info("[LSP] >>> Returning {} workspace symbols", symbols.size());
+        return symbols;
+    });
+
+    message_handler_.add<reqst::TextDocument_CodeLens>([this](reqst::TextDocument_CodeLens::Params&& params) -> reqst::TextDocument_CodeLens::Result {
+        log::info("\n[LSP] <<< TextDocument CodeLens {}", params.textDocument.uri.path());
+        fs::path file = absolute_path(params.textDocument.uri.path());
+        if(get_file_type(file) != FileType::SourceFile) return nullptr;
+        ensure_compile(params.textDocument.uri.path());
+        if(!compile || !compile->program) return nullptr;
+
+        lsp::Array<lsp::CodeLens> lenses;
+        collect_code_lenses(*compile->program, compile->name_map, file.generic_string(),
+                            to_file_uri(file), lenses);
+        log::info("[LSP] >>> Returning {} code lenses", lenses.size());
+        return lenses;
+    });
+}
+
 
 void Server::setup_events_other() {
 

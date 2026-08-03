@@ -139,6 +139,14 @@ public:
     // Number of files a project compiles, including those it inherits from dependencies.
     size_t total_file_count(const Project& project) const;
 
+    // Every project instantiated so far, in no particular order. Nothing is parsed here:
+    // a config that has not been reached yet simply has no projects.
+    std::vector<const Project*> all_projects() const;
+
+    // Content of a file: the editor's buffer when there is one, what is on disk otherwise.
+    // Null when the file cannot be read.
+    const std::string* file_text(const fs::path& file);
+
 private:
     ConfigFile* instantiate_config(const ConfigPath& origin, config::ConfigLog& log);
     ConfigFile* instantiate_config_json(const ConfigPath& origin, config::ConfigLog& log);

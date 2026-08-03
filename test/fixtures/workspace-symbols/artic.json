@@ -1,0 +1,14 @@
+{
+    "artic-config": "2.0",
+    "projects": [
+        {
+            "name": "ws-core",
+            "files": ["core/*.art"]
+        },
+        {
+            "name": "ws-app",
+            "files": ["app/*.art"],
+            "dependencies": ["ws-core"]
+        }
+    ]
+}
