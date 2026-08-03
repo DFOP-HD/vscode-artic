@@ -368,56 +368,82 @@ Only what is **not** done is tracked here. Everything already shipped is describ
 [docs/implementation-notes.md](docs/implementation-notes.md); if you want to know how a
 feature works, read that, not a changelog.
 
-Ordered by value. Item 1 is hygiene the owner benefits from; item 2 is the polish that is
-left.
+**The language server itself is feature-complete.** Every LSP capability that artic's frontend
+can support is implemented and tested; the two that are not are parked below for reasons that
+are not about effort. What is left is one piece of hygiene with an external dependency, and a
+short list of things that were measured and found not to be worth doing yet.
 
-### 1. Upstream the upstreamable fork set — *not started*
+### 1. Upstream the upstreamable fork set — *not started, and the only open work*
 
 Open a PR against AnyDSL/artic with the non-LSP fixes listed under
 [Working with the artic/ submodule](#working-with-the-artic-submodule). The unmerged
 `origin/error-tolerance` branch is prior art. The longer this waits the more expensive it gets
-— the parse-error recovery added to exactly this set.
+— parse-error recovery and the error nodes' missing `infer` rule both landed in exactly this
+set. It is also the only item whose outcome is not ours to decide, so starting it early is
+worth more than finishing it fast.
 
-### 2. Bound the *type* errors a parse error causes — *not started*
+### Deferred — measured, and not worth doing at the current scale
 
-Parse-error recovery is done (see
-[Recovering from a parse error](docs/implementation-notes.md#recovering-from-a-parse-error)):
-one broken construct now costs three parse errors instead of eight, and the declarations below
-it survive. What is left is the second amplifier, downstream of it — a node the parser gave up
-on still reaches the type checker and still produces "cannot infer type for expression", once
-per wreckage. For the reference case the total is 6 diagnostics, of which 3 are type errors that
-say nothing.
+- **Performance.** Text sync is `Full`, and every `didChange` recompiles the whole project and
+  rebuilds the `NameMap` from scratch. Measured on this machine against generated projects and
+  against the largest real artic library in `D:/anydsl-metaproject` (`runtime/platforms/artic`,
+  29 files, 7 208 lines):
 
-Fixing it means propagating "this subtree came from a parse error" so `check.cpp` stays quiet on
-it, rather than suppressing by message. `check.cpp` already carries fork error-tolerance changes,
-so this lands in the same file. **Measure first**: the bound in
-[test/incomplete-code.test.mjs](test/incomplete-code.test.mjs) is what says whether it is worth
-doing, and the same review rule applies — a `ctest` expectation that stops reporting an error it
-used to report is a regression, not a success.
+  | Project | Cold open | `didChange` → diagnostics | Warm request |
+  | ------- | --------: | ------------------------: | -----------: |
+  | generated, 360 decls | 52 ms | 17 ms | 1.6 ms |
+  | generated, 3 600 decls | 136 ms | 50 ms | 2.4 ms |
+  | generated, 10 800 decls | 190 ms | 104 ms | 4.9 ms |
+  | generated, 54 000 decls | 607 ms | 471 ms | 9.7 ms |
+  | **real `runtime` library** | **83 ms** | **43 ms** | **3.4 ms** |
 
-### Deferred
+  It is linear in project size, at roughly 9 µs per declaration, and an edit only becomes
+  user-visibly slow (>100 ms) at about **1.5× the size of the largest artic project that
+  exists**. So incremental parsing is not the thing to reach for.
 
+  **The one number that is not fine is queueing.** Notifications are handled synchronously on
+  the message loop, so a request issued behind a burst of edits waits for every one of them:
+  `documentSymbol` behind 10 queued `didChange`s took **429 ms** — ten compiles, not one.
+  Latency while typing is `pending_edits × compile_time`, and that is the term that would bite
+  first on a large project. The fix is to coalesce edits rather than to make a compile faster.
+  It is still deferred, because `lsp-framework` has no way to peek at the input queue and
+  `processIncomingMessages()` reads one message at a time, so coalescing means a timer thread
+  and locking around compile state that today has no concurrency at all. **Trigger for
+  revisiting: a real project where the edit round trip exceeds ~100 ms, or a report of the
+  editor feeling laggy while typing.** Re-measure with
+  [test/latency.test.mjs](test/latency.test.mjs) before believing anything here.
+- **Protocol modernisation.** Both remaining pieces were costed against the numbers above and
+  neither buys anything: **pull diagnostics** (`textDocument/diagnostic`) would still trigger
+  the same compile, so it saves the publish and nothing else; **`$/progress` during a compile**
+  is free of risk but invisible at 83 ms. Incremental text sync is in the same bucket — the
+  server re-lexes the whole buffer regardless, so it would only shrink a payload that is not
+  the bottleneck, in exchange for range arithmetic that corrupts a buffer silently when wrong.
 - **Doc comments** — the lexer discards `///`, so nothing can surface documentation in hover
-  or completion. Capturing them is a fork change under the `ENABLE_LSP` policy, and it must not
-  alter tokenisation for the standalone compiler.
-- **Performance and protocol modernisation** — text sync is `Full` (the whole buffer on every
-  keystroke), every change recompiles the entire project and rebuilds the `NameMap` from
-  scratch, diagnostics are push-only, and there is no `$/progress` during a compile.
-  Now measured rather than assumed: [test/latency.test.mjs](test/latency.test.mjs) puts an edit
-  round trip at ~19 ms and every warm request at 1–3 ms on a ~360-declaration project. Nothing
-  here is worth doing until a real project makes those numbers move. Revisit only if a change
-  is non-intrusive and carries no crash risk.
+  or completion. The highest-value item left after item 1, and the only deferred entry a user
+  would actually notice. Capturing them is a fork change under the `ENABLE_LSP` policy, and it
+  must not alter tokenisation for the standalone compiler.
 - **Minor gaps** — semantic tokens have no delta support and never emit the `deprecated` or
   `defaultLibrary` modifiers; call hierarchy is derivable from `references_of` plus an
   enclosing-function lookup; rename performs no collision, shadowing or valid-identifier check.
+  Of these only rename validation is arguably a correctness bug rather than a gap: renaming to
+  a keyword or to a name already bound in scope produces a broken program with no warning.
 - **Comments in `artic.json`** — the config is read with `nlohmann::json::parse`, i.e. nlohmann's
   defaults, so `//` is a parse error. The README examples were written with comments for years and
   were therefore not copy-pasteable. Enabling `ignore_comments` is one line, but the document
   selector in [vscode/src/extension.ts](vscode/src/extension.ts) matches `language: 'json'`, so
   the file would also need a `jsonc` filename association to stop VS Code's own validator
   flagging them, and the selector would have to accept both languages or config diagnostics
-  stop arriving. Documented as a limitation in the README instead. Item 1 lowers the value of
-  this further: the best config is the one nobody has to write.
+  stop arriving. Documented as a limitation in the README instead. Zero-config lowers the value
+  of this further: the best config is the one nobody has to write.
+
+### Declined — considered, evidenced, and rejected by the owner
+
+- **Inferring a project from a directory**, and **project globs from a setting**. The evidence
+  is in [Zero-config projects](docs/implementation-notes.md#zero-config-projects): artic has no
+  import mechanism, ~550 of the 690 real-world `.art`/`.impala` files are independent
+  single-file programs the fallback already handles correctly, a directory rule turns 71 clean
+  files into 141 redefinition errors, and a real project is combinatorial in a way only the
+  build system knows. Do not re-propose either without new evidence against that table.
 
 ### Parked — do not start without explicit approval
 

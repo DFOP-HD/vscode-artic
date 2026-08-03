@@ -116,9 +116,10 @@ Where the break sits matters as much as that there is one. A break at the *end*
 of a file costs nothing downstream; a break in the middle is what an editor
 actually produces, and it used to cost an error per token to the end of the file.
 The *a break in the middle of a file* block bounds that, and bounds parse errors
-separately from type errors — they are two different amplifiers, and only the
-first one is fixed. Assert on the class of error you are guarding, not on a total
-that a change elsewhere can move.
+separately from type errors — they are two different amplifiers, fixed by two
+different changes. Assert on the class of error you are guarding, not on a total
+that a change elsewhere can move: the type-error assertion is that no
+`cannot infer type` survives, not that the total is some number.
 
 ### Latency
 
