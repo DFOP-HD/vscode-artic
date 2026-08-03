@@ -142,6 +142,33 @@ bool Workspace::uses_file(const Project& project, const fs::path& file) const {
     return false;
 }
 
+std::vector<const Project*> Workspace::projects_of_config(const fs::path& config) const {
+    // `configs_` is keyed by the canonical path, the same one `instantiate_config` inserts.
+    auto it = configs_.find(paths::canonical_path(config));
+    if (it == configs_.end()) return {};
+
+    std::vector<const Project*> result;
+    for (const auto& name : it->second->projects) {
+        if (auto project = try_get_project(name)) result.push_back(project);
+    }
+    return result;
+}
+
+size_t Workspace::total_file_count(const Project& project) const {
+    // Dependencies form a DAG at best, and a cycle at worst until the registry rejects it,
+    // so the walk has to remember where it has been.
+    std::unordered_set<fs::path> files;
+    std::unordered_set<const Project*> seen;
+    std::function<void(const Project&)> walk = [&](const Project& p) {
+        if (!seen.insert(&p).second) return;
+        files.insert(p.files.begin(), p.files.end());
+        for (const auto& dep_id : p.dependencies)
+            if (auto dep = try_get_project(dep_id)) walk(*dep);
+    };
+    walk(project);
+    return files.size();
+}
+
 std::unordered_set<File*> Workspace::files_for_project(const Project& project) {
     std::unordered_set<File*> res;
     for (const auto& f : project.files) {

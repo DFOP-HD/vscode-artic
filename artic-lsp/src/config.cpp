@@ -217,20 +217,12 @@ std::unordered_set<fs::path> ConfigParser::evaluate_patterns(Project& project) {
     // Collect all files matching include patterns and not matching exclude patterns
     std::unordered_set<fs::path> matched_files;
 
-    auto file_arr_to_string = [](const fs::path& root_dir, const auto& files){
-        std::ostringstream s;
-        s << files.size() << " files:" << std::endl;
-        for(const auto& file : files) {
-            s << "- " << fs::relative(file, root_dir).generic_string() << " " << std::endl;
-        }
-        return s.str();
-    };
-
     // Evaluate include patterns
     for (const auto& pattern : include_patterns) {
         auto matches = FilePatternParser::expand(root_dir, pattern, log);
         if (matches.empty()) {
             log.warn("0 files", pattern);
+            project.pattern_matches.push_back({ .pattern = pattern });
             continue;
         }
 
@@ -238,17 +230,20 @@ std::unordered_set<fs::path> ConfigParser::evaluate_patterns(Project& project) {
         matched_files.insert(matches.begin(), matches.end());
         auto after = matched_files.size();
 
-        log.info(
-            "+ " + std::to_string(after - before) + " files"
-            + " | total matches: " + file_arr_to_string(root_dir, matches),
-            pattern
-        );
+        // Reported as an inlay hint on the config document rather than as a diagnostic:
+        // a pattern that works is not a problem and does not belong in the Problems panel.
+        project.pattern_matches.push_back({
+            .pattern = pattern,
+            .matched = matches.size(),
+            .changed = after - before,
+        });
     }
 
     for (const auto& pattern : exclude_patterns) {
         auto matches = FilePatternParser::expand(root_dir, pattern.substr(1), log);
         if (matches.empty()) {
             log.warn("0 files excluded", pattern);
+            project.pattern_matches.push_back({ .pattern = pattern, .excludes = true });
             continue;
         }
         auto before = matched_files.size();
@@ -257,11 +252,12 @@ std::unordered_set<fs::path> ConfigParser::evaluate_patterns(Project& project) {
         }
         auto after = matched_files.size();
 
-        log.info(
-            "- " + std::to_string(before - after) + " files"
-            + " | total matches: " + file_arr_to_string(root_dir, matches),
-            pattern
-        );
+        project.pattern_matches.push_back({
+            .pattern = pattern,
+            .matched = matches.size(),
+            .changed = before - after,
+            .excludes = true,
+        });
     }
     return matched_files;
 }

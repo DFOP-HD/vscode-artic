@@ -34,7 +34,19 @@ struct File {
 
 struct Project {
     using Identifier = std::string;
-    
+
+    // What one `files` pattern contributed. Kept so the config document can be annotated
+    // with it; patterns are evaluated once and the result is cached, so it cannot be
+    // recomputed when the editor asks.
+    struct PatternMatch {
+        std::string pattern;
+        // Files the pattern itself matched, and how many of them the project did not
+        // already have. An exclude pattern reports how many it removed.
+        size_t matched = 0;
+        size_t changed = 0;
+        bool excludes = false;
+    };
+
     // Unique project name
     // May be referenced by other projects
     Identifier name;
@@ -52,6 +64,9 @@ struct Project {
 
     // Expansion of file patterns
     std::vector<fs::path> files;
+
+    // What each entry of `file_patterns` contributed, in the order they were evaluated.
+    std::vector<PatternMatch> pattern_matches;
 
     // Names of other projects that this project depends on
     // Projects will include all files from dependencies
@@ -116,6 +131,13 @@ public:
 
     // return true if file was known before
     bool on_config_changed(fs::path config_path, config::ConfigLog& log);
+
+    // Projects a config file declares, in declaration order. Used to annotate the config
+    // document itself; it never triggers parsing, so an unopened config yields nothing.
+    std::vector<const Project*> projects_of_config(const fs::path& config) const;
+
+    // Number of files a project compiles, including those it inherits from dependencies.
+    size_t total_file_count(const Project& project) const;
 
 private:
     ConfigFile* instantiate_config(const ConfigPath& origin, config::ConfigLog& log);

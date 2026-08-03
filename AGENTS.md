@@ -575,16 +575,24 @@ is the reference for what else a server can advertise.
     documentation — has no content to serve until doc comments exist, and those are
     **Deferred**, so nothing further is scheduled here.
     Guarded by [test/completion.test.mjs](test/completion.test.mjs).
-19. **Project overview in the config file** — the config parser used to annotate `artic.json`
-    with per-project information: which config declared each project, its own file count
-    versus the count inherited from dependencies, and the resolved file list. Most of it was
-    commented out because it rendered as noise in the Problems panel; the one piece still
-    live is the `+ N files | total matches:` Information diagnostic (item 2's follow-up),
-    which reads as malformed for the same reason. Reintroduce the whole thing as **inlay
-    hints on the `artic.json` document** rather than diagnostics, so the Problems panel stays
-    reserved for actual problems. The commented code was deleted in the refactor; it is
-    recoverable from git history (`workspace.cpp`: `Project::collect_files`,
-    `log_project_info`, `print_project`, `ProjectRegistry::print`).
+19. **Project overview in the config file** — *done*. The `+ N files | total matches:`
+    Information diagnostic is gone, and `artic.json` / `.artic-lsp` are annotated with inlay
+    hints instead: a project's name carries `N files` (plus `M with dependencies` when it
+    inherits any), each include pattern carries what it matched, and each exclude pattern
+    what it removed. **A working configuration is not a problem and must not appear in the
+    Problems panel** — that is the whole point of the move, and
+    [test/config-hints.test.mjs](test/config-hints.test.mjs) asserts the document publishes
+    no diagnostics at all.
+    Two things this needs that are easy to get wrong. **The counts cannot be recomputed when
+    the editor asks**: patterns are expanded once and the resulting `ConfigFile` is cached, so
+    `evaluate_patterns()` records them on `Project::pattern_matches` as it goes. And **there
+    is no position information in a parsed config** — it is plain nlohmann JSON — so
+    `ConfigDocument` in [artic-lsp/src/server.cpp](artic-lsp/src/server.cpp) locates each
+    literal by scanning the file, exactly as `publish_config_diagnostics()` does, and marks
+    every occurrence it has used so two projects sharing a `files` pattern each get their own
+    hint instead of both landing on the first line.
+    `Workspace::projects_of_config()` deliberately never parses anything: `configs_` is keyed
+    by canonical path and a config nothing has opened yet simply yields no hints.
 
 ### Deferred
 

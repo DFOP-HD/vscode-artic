@@ -1905,6 +1905,80 @@ void collect_parameter_hints(
     for (const auto& decl : program.decls) if (decl) decl->traverse(visit);
 }
 
+/// A config document, scanned for the string literals a project is described by. There is no
+/// position information in the parsed config - it is plain nlohmann JSON - so a hint is
+/// placed by finding the literal it belongs to, exactly as config diagnostics are.
+class ConfigDocument {
+public:
+    explicit ConfigDocument(const fs::path& file) {
+        if (auto text = paths::read_file(file)) {
+            std::istringstream is(*text);
+            for (std::string line; std::getline(is, line); ) lines_.push_back(std::move(line));
+        }
+    }
+
+    bool empty() const { return lines_.empty(); }
+
+    /// End position of the next occurrence of `"value"` that has not been annotated yet.
+    /// Two projects may well share a `files` pattern, and each deserves its own hint.
+    std::optional<lsp::Position> take(const std::string& value) {
+        auto quoted = text::quote(value);
+        for (lsp::uint row = 0; row < lines_.size(); ++row) {
+            const auto& line = lines_[row];
+            for (size_t col = line.find(quoted); col != std::string::npos; col = line.find(quoted, col + 1)) {
+                if (!used_.insert({ row, col }).second) continue;
+                return lsp::Position{ row, static_cast<lsp::uint>(col + quoted.size()) };
+            }
+        }
+        return std::nullopt;
+    }
+
+private:
+    std::vector<std::string> lines_;
+    std::set<std::pair<lsp::uint, size_t>> used_;
+};
+
+std::string file_count(size_t n) {
+    return std::to_string(n) + (n == 1 ? " file" : " files");
+}
+
+void collect_config_hints(
+    workspace::Workspace& workspace,
+    const fs::path& file,
+    const lsp::Range& range,
+    lsp::Array<lsp::InlayHint>& hints)
+{
+    ConfigDocument doc(file);
+    if (doc.empty()) return;
+
+    auto add = [&](std::optional<lsp::Position> position, std::string label) {
+        if (!position || !contains(range, *position)) return;
+        lsp::InlayHint hint;
+        hint.position = *position;
+        hint.label = std::move(label);
+        hint.paddingLeft = true;
+        hint.paddingRight = false;
+        hints.push_back(std::move(hint));
+    };
+
+    for (const auto* project : workspace.projects_of_config(file)) {
+        auto own = project->files.size();
+        auto total = workspace.total_file_count(*project);
+        std::string label = file_count(own);
+        if (total != own) label += ", " + std::to_string(total) + " with dependencies";
+        add(doc.take(project->name), std::move(label));
+
+        for (const auto& match : project->pattern_matches) {
+            std::string pattern_label = match.excludes
+                ? file_count(match.changed) + " excluded"
+                : file_count(match.changed);
+            if (match.matched != match.changed)
+                pattern_label += " of " + std::to_string(match.matched) + " matched";
+            add(doc.take(match.pattern), std::move(pattern_label));
+        }
+    }
+}
+
 } // anonymous namespace
 
 void Server::setup_events_other() {
@@ -1912,6 +1986,16 @@ void Server::setup_events_other() {
     message_handler_.add<reqst::TextDocument_InlayHint>([this](reqst::TextDocument_InlayHint::Params&& params) -> reqst::TextDocument_InlayHint::Result {
         fs::path file = absolute_path(params.textDocument.uri.path());
         log_request("TextDocument InlayHint", params.textDocument, params.range);
+
+        // A config document is annotated with what its patterns actually matched. This used
+        // to be an Information diagnostic, which put a working configuration in the Problems
+        // panel; the panel is reserved for actual problems.
+        if(get_file_type(file) == FileType::ConfigFile) {
+            lsp::Array<lsp::InlayHint> config_hints;
+            collect_config_hints(*workspace_, file, params.range, config_hints);
+            log::info("[LSP] >>> Returning {} config inlay hints", config_hints.size());
+            return config_hints;
+        }
 
         // inlay hints are not allowed to trigger recompile as this is called right after document changed
         if(!has_compiled(file)) return nullptr;
