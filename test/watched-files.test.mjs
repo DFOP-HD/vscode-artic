@@ -110,6 +110,10 @@ describe('a source file changing on disk', () => {
         await client.initialize(ws.uri);
         client.openDocument(mainUri, MAIN);
         await client.waitForDiagnostics(mainUri);
+        // The first compile publishes for every file in the project, and lib.art's
+        // notification can arrive after main.art's. Without waiting for it, it lands in the
+        // log the test below clears and reads as a reload the server never did.
+        await client.waitForDiagnostics(ws.fileUri('lib.art'));
     });
 
     after(async () => {
