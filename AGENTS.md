@@ -490,7 +490,12 @@ worth more than finishing it fast.
   [test/circular-dependencies.test.mjs](test/circular-dependencies.test.mjs).
 - **The project registry is per server session, not per workspace.** A duplicate project
   name is warned about and *ignored*, so two staged workspaces in one test suite must not
-  reuse a name — the second one's projects silently do not exist.
+  reuse a name — the second one's projects silently do not exist. That rule only applies to
+  names the **user** wrote: a name taken from a build file is disambiguated by
+  `Workspace::register_project()` instead, because two checkouts of the same CMake project
+  (`stincilla/` and `stincilla-wg008/` beside it) define identical names and dropping the
+  second left 227 of the metaproject's 968 sources with no project at all — with the loser
+  decided by which file was opened first.
 - **`lsp::FileUri::fromPath()` renders the path with `u8string()`, not `generic_u8string()`.**
   On **MSVC** that keeps native backslashes, which get percent-encoded as `%5C`, so **no
   diagnostic ever reached the editor**. MinGW's libstdc++ keeps forward slashes, which is why
@@ -505,6 +510,15 @@ worth more than finishing it fast.
   module and top-level loops dispatch on the token themselves. `parse_error_decl()` is the
   guarantee at the declaration level — it always consumes at least one token before
   `skip_to_decl()` runs.
+- **`std::filesystem::recursive_directory_iterator` is unusable after a failed increment, and a
+  bounded scan spends its budget wherever the filesystem hands out entries first.** Both bit
+  zero-config detection in a metaproject checkout: one unreadable directory inside `llvm-project`
+  aborted the scan for the *whole* workspace, and `llvm_build`'s 1750 `.vcxproj` files exhausted
+  the file budget before the scan ever reached `stincilla/`. Detection reported that the workspace
+  contained nothing, so every file fell back to a single-file compile — which looks like a parser
+  problem, not a discovery one. `detect_build_files()` walks with an explicit stack now, and
+  `find_detected_project()` scans the file's own ancestors nearest-first instead of the workspace
+  root. Guarded by the last two cases in [test/zero-config.test.mjs](test/zero-config.test.mjs).
 - **`ConfigLog::error("...{}", x)` does not format.** The `{}` reaches the user verbatim and
   `x` is silently treated as the search context.
 - **`JSON_DIAGNOSTIC_POSITIONS` changes the layout of `basic_json`, so it is a build-wide

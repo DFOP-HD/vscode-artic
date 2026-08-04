@@ -196,22 +196,28 @@ private:
     Project* discover_project_for_file(const fs::path& file, config::ConfigLog& log);
     Project* find_config_recursive(fs::path dir, const fs::path& file, config::ConfigLog& log);
     Project* find_detected_project(const fs::path& file, config::ConfigLog& log);
-    ConfigFile* detected_config_for_root(const fs::path& root, config::ConfigLog& log);
+    ConfigFile* detected_config_for_dir(const fs::path& dir, config::ConfigLog& log);
     ConfigFile* find_config_in_dir(const fs::path& dir, config::ConfigLog& log);
     Project* find_project_in_config_using_file(const ConfigFile& config, const fs::path& file, config::ConfigLog& log);
     bool uses_file(const Project& project, const fs::path& file) const;
     std::unordered_set<File*> files_for_project(const Project& project);
     File* tracked_file(const fs::path& file);
     Project* try_get_project(const Project::Identifier& project_id) const;
+    // Adds a project to the registry. Returns the identifier it ended up under, or nothing
+    // if the name was already taken by a project the user named themselves.
+    std::optional<Project::Identifier> register_project(Project project, bool is_implicit,
+                                                        config::ConfigLog& log);
+    Project::Identifier unique_project_name(const Project::Identifier& name,
+                                            const fs::path& origin) const;
 
     // Non-owning: the projects themselves live in `projects_`.
     std::unordered_map<fs::path, Project*> project_for_file_cache_;
 
     std::vector<fs::path> workspace_roots_;
-    // Synthetic config per workspace root, holding the build files the scan found. Null
+    // Synthetic config per scanned directory, holding the build files the scan found. Null
     // when the scan found nothing: the miss has to be cached too, or every file without a
     // configuration rescans the whole tree. Owned by `configs_`.
-    std::unordered_map<fs::path, ConfigFile*> detected_config_for_root_;
+    std::unordered_map<fs::path, ConfigFile*> detected_config_for_dir_;
     // Projects that were reached through such a config, so their provenance can be
     // reported as detected rather than configured.
     std::unordered_set<const Project*> detected_projects_;

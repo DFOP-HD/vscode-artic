@@ -707,32 +707,44 @@ bool is_within(const fs::path& covered, const fs::path& dir) {
 
 } // anonymous namespace
 
-std::vector<fs::path> detect_build_files(const fs::path& root, ConfigLog& log) {
+std::vector<fs::path> detect_build_files(const fs::path& dir, ConfigLog& log) {
     std::vector<fs::path> solutions, ninja_files, vcxprojs;
 
-    size_t directories = 0;
-    std::error_code ec;
-    fs::recursive_directory_iterator it(root, fs::directory_options::skip_permission_denied, ec);
-    if (ec) {
-        log::info("Could not scan workspace root {}: {}", root.generic_string(), ec.message());
-        return {};
-    }
-    for (fs::recursive_directory_iterator end; it != end; it.increment(ec)) {
-        if (ec) break;
-        if (it->is_directory(ec)) {
-            if (++directories > max_scanned_directories) break;
-            if (static_cast<size_t>(it.depth()) + 1 >= max_scan_depth ||
-                is_skipped_directory(it->path().filename().string()))
-                it.disable_recursion_pending();
-            continue;
-        }
-        if (solutions.size() + ninja_files.size() + vcxprojs.size() >= max_build_files) break;
+    size_t directories = 0, unreadable = 0;
+    bool truncated = false;
+    // Walked with an explicit stack rather than `recursive_directory_iterator`, because an
+    // increment that fails leaves that iterator unusable: a single unreadable directory —
+    // a path past MAX_PATH inside an LLVM checkout, say — aborted the scan for the *whole*
+    // tree, and every build file after it silently did not exist.
+    std::vector<std::pair<fs::path, size_t>> pending{ { dir, 0 } };
+    while (!pending.empty() && !truncated) {
+        auto [current, depth] = pending.back();
+        pending.pop_back();
+        if (++directories > max_scanned_directories) { truncated = true; break; }
 
-        auto name = to_lower(it->path().filename().string());
-        auto ext = to_lower(it->path().extension().string());
-        if (ext == ".sln") solutions.push_back(it->path());
-        else if (name == "build.ninja") ninja_files.push_back(it->path());
-        else if (ext == ".vcxproj") vcxprojs.push_back(it->path());
+        std::error_code ec;
+        fs::directory_iterator it(current, fs::directory_options::skip_permission_denied, ec);
+        if (ec) { ++unreadable; continue; }
+        for (fs::directory_iterator end; it != end; it.increment(ec)) {
+            if (ec) { ++unreadable; break; }
+            std::error_code entry_ec;
+            if (it->is_directory(entry_ec)) {
+                if (depth + 1 >= max_scan_depth) continue;
+                if (is_skipped_directory(it->path().filename().string())) continue;
+                pending.emplace_back(it->path(), depth + 1);
+                continue;
+            }
+            if (solutions.size() + ninja_files.size() + vcxprojs.size() >= max_build_files) {
+                truncated = true;
+                break;
+            }
+
+            auto name = to_lower(it->path().filename().string());
+            auto ext = to_lower(it->path().extension().string());
+            if (ext == ".sln") solutions.push_back(it->path());
+            else if (name == "build.ninja") ninja_files.push_back(it->path());
+            else if (ext == ".vcxproj") vcxprojs.push_back(it->path());
+        }
     }
 
     // Deterministic order, so which of two overlapping build files wins does not depend on
@@ -776,8 +788,9 @@ std::vector<fs::path> detect_build_files(const fs::path& root, ConfigLog& log) {
         kept.push_back(vcxproj);
     }
 
-    log::info("Scanned {} directories under {} and detected {} build file(s)",
-              directories, root.generic_string(), kept.size());
+    log::info("Scanned {} directories under {} ({} unreadable{}) and detected {} build file(s)",
+              directories, dir.generic_string(), unreadable, truncated ? ", truncated" : "",
+              kept.size());
     return kept;
 }
 

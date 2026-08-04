@@ -23,7 +23,7 @@ std::vector<ConfigPath> parse_sln(const ConfigPath& origin, ConfigLog& log);
 // One project per ninja target whose command line invokes the artic compiler.
 std::vector<Project> parse_ninja(const ConfigPath& origin, ConfigLog& log);
 
-// Build files under `root` that look like they build artic sources, strongest match first.
+// Build files under `dir` that look like they build artic sources, strongest match first.
 // This is what makes a CMake- or MSBuild-driven checkout work without an `artic.json`: the
 // build system already knows which files are compiled together, and it is the only thing
 // that does. Mirrors `selectWorkspaceConfigFiles` in vscode/src/detect.ts, which does the
@@ -31,7 +31,7 @@ std::vector<Project> parse_ninja(const ConfigPath& origin, ConfigLog& log);
 //
 // The scan is bounded (depth, directory count, file count) and skips hidden and output
 // directories, because it runs on the miss path of every file with no config above it.
-std::vector<fs::path> detect_build_files(const fs::path& root, ConfigLog& log);
+std::vector<fs::path> detect_build_files(const fs::path& dir, ConfigLog& log);
     
 struct ConfigLog {
     using Severity = lsp::DiagnosticSeverity;

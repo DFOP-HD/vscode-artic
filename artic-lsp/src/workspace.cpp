@@ -33,7 +33,7 @@ void Workspace::reload() {
     configs_.clear();
     arena_ = std::make_unique<Arena>();
     project_for_file_cache_.clear();
-    detected_config_for_root_.clear();
+    detected_config_for_dir_.clear();
     detected_projects_.clear();
 }
 
@@ -136,31 +136,40 @@ bool is_within(const fs::path& root, const fs::path& file) {
 Project* Workspace::find_detected_project(const fs::path& file, config::ConfigLog& log) {
     for (const auto& root : workspace_roots_) {
         if (!is_within(root, file)) continue;
-        auto config = detected_config_for_root(root, log);
-        if (!config) continue;
-        if (auto project = find_project_in_config_using_file(*config, file, log)) {
-            log::info("- Found matching project '{}' in detected build file {}",
-                      project->name, project->origin.generic_string());
-            detected_projects_.insert(project);
-            return project;
+        // Nearest ancestor first, not the workspace root: a build file beside the file
+        // describes it better than one several checkouts away, and the scan never has to
+        // enter a sibling tree at all. Scanning the root of a metaproject that also holds
+        // an LLVM checkout exhausts the scan's own bounds long before it reaches the tree
+        // the file is actually in, and then *nothing* is detected anywhere.
+        auto root_key = paths::lookup_key(root);
+        for (auto dir = file.parent_path();; dir = dir.parent_path()) {
+            if (auto config = detected_config_for_dir(dir, log)) {
+                if (auto project = find_project_in_config_using_file(*config, file, log)) {
+                    log::info("- Found matching project '{}' in detected build file {}",
+                              project->name, project->origin.generic_string());
+                    detected_projects_.insert(project);
+                    return project;
+                }
+            }
+            if (paths::lookup_key(dir) == root_key || dir.parent_path() == dir) break;
         }
     }
     return nullptr;
 }
 
-ConfigFile* Workspace::detected_config_for_root(const fs::path& root, config::ConfigLog& log) {
-    if (auto it = detected_config_for_root_.find(root); it != detected_config_for_root_.end())
+ConfigFile* Workspace::detected_config_for_dir(const fs::path& dir, config::ConfigLog& log) {
+    if (auto it = detected_config_for_dir_.find(dir); it != detected_config_for_dir_.end())
         return it->second;
     // Cache the miss before scanning: this runs for every file that has no configuration
-    // above it, and a workspace with no build files must not be walked more than once.
-    detected_config_for_root_[root] = nullptr;
+    // above it, and a directory with no build files must not be walked more than once.
+    detected_config_for_dir_[dir] = nullptr;
 
-    auto build_files = config::detect_build_files(root, log);
+    auto build_files = config::detect_build_files(dir, log);
     if (build_files.empty()) return nullptr;
 
     // Named after a file that does not exist, so nothing can look it up as a real config
     // and no diagnostic can ever be attributed to it.
-    ConfigFile cfg{ .path = root / "<detected build files>" };
+    ConfigFile cfg{ .path = dir / "<detected build files>" };
     for (auto& build_file : build_files) {
         cfg.includes.push_back(ConfigPath{
             .path = build_file,
@@ -175,7 +184,7 @@ ConfigFile* Workspace::detected_config_for_root(const fs::path& root, config::Co
     auto path = cfg.path;
     configs_[path] = arena_->make_ptr<ConfigFile>(std::move(cfg));
     auto* config = configs_.at(path).get();
-    detected_config_for_root_[root] = config;
+    detected_config_for_dir_[dir] = config;
     return config;
 }
 
@@ -299,6 +308,54 @@ Project* Workspace::try_get_project(const Project::Identifier& project_id) const
     return projects_.contains(project_id) ? projects_.at(project_id).get() : nullptr;
 }
 
+std::optional<Project::Identifier> Workspace::register_project(Project project, bool is_implicit,
+                                                               config::ConfigLog& log) {
+    if (auto it = projects_.find(project.name); it != projects_.end()) {
+        // The same build file parsed twice is not a conflict, it is the same project.
+        if (paths::lookup_key(it->second->origin) == paths::lookup_key(project.origin))
+            return std::nullopt;
+        // A name written by the user is what other configs reference in `dependencies`, so
+        // two definitions of it really are ambiguous and the second one is refused. A name
+        // taken from a build file is not referenced by anything and is not the user's to
+        // fix: sibling checkouts of the same CMake project — `stincilla/` and
+        // `stincilla-wg008/` next to it — define exactly the same project names, and
+        // dropping the second means every file in that checkout silently has no project,
+        // with which checkout loses depending on the order files happened to be opened.
+        if (!is_implicit) {
+            log.warn("ignoring duplicate definition of " + project.name + " in " +
+                     project.origin.generic_string(), project.name);
+            return std::nullopt;
+        }
+        project.name = unique_project_name(project.name, project.origin);
+    }
+    auto name = project.name;
+    projects_[name] = arena_->make_ptr<Project>(std::move(project));
+    return name;
+}
+
+Project::Identifier Workspace::unique_project_name(const Project::Identifier& name,
+                                                   const fs::path& origin) const {
+    // Qualified with the part of the path that actually tells the two apart. Both build
+    // files are typically `<checkout>/build/<target>.vcxproj`, so the directory the build
+    // file sits in says nothing -- what the user needs to see is the checkout.
+    auto existing = try_get_project(name);
+    auto mine = origin.parent_path();
+    auto theirs = existing ? existing->origin.parent_path() : fs::path();
+    for (int i = 0; i < 8 && mine.has_relative_path(); ++i) {
+        auto component = mine.filename().generic_string();
+        if (component != theirs.filename().generic_string()) {
+            auto candidate = name + " (" + component + ")";
+            if (!projects_.contains(candidate)) return candidate;
+        }
+        mine = mine.parent_path();
+        theirs = theirs.parent_path();
+    }
+    for (size_t n = 2;; ++n) {
+        auto candidate = name + " (" + std::to_string(n) + ")";
+        if (!projects_.contains(candidate)) return candidate;
+    }
+}
+
 ConfigFile* Workspace::instantiate_config(const ConfigPath& origin, config::ConfigLog& log) {
     auto o = origin;
     o.path = paths::canonical_path(o.path);
@@ -338,12 +395,8 @@ ConfigFile* Workspace::instantiate_config_vcxproj(const ConfigPath& origin, conf
             log.error("Failed to parse vcxproj file");
             return nullptr;
         }
-    } else if(projects_.contains(project->name)) {
-        if(!origin.is_implicit)
-            log.warn("ignoring duplicate definition of " + project->name + " in " + project->origin.generic_string(), project->name);
-    } else {
-        projects_[project->name] = arena_->make_ptr<Project>(*project); // copy
-        cfg.projects.push_back(project->name);
+    } else if(auto name = register_project(*project, origin.is_implicit, log)) {
+        cfg.projects.push_back(*name);
     }
 
     // Cached even when nothing was found, so a large solution parses each project once.
@@ -370,14 +423,8 @@ ConfigFile* Workspace::instantiate_config_ninja(const ConfigPath& origin, config
 
     ConfigFile cfg{ .path = origin.path };
     for (auto& project : config::parse_ninja(origin, log)) {
-        auto name = project.name;
-        if(projects_.contains(name)) {
-            if(!origin.is_implicit)
-                log.warn("ignoring duplicate definition of " + name + " in " + project.origin.generic_string(), name);
-            continue;
-        }
-        cfg.projects.push_back(name);
-        projects_[name] = arena_->make_ptr<Project>(std::move(project));
+        if(auto name = register_project(std::move(project), origin.is_implicit, log))
+            cfg.projects.push_back(*name);
     }
     if(cfg.projects.empty() && !origin.is_implicit)
         log.warn("No artic build commands found in " + origin.path.filename().generic_string());
@@ -396,13 +443,8 @@ ConfigFile* Workspace::instantiate_config_json(const ConfigPath& origin, config:
     // track config
     configs_[origin.path] = arena_->make_ptr<ConfigFile>(parser.config);
     // track projects
-    for (const auto& project : parser.projects){
-        if(projects_.contains(project.name)) {
-            log.warn("ignoring duplicate definition of " + project.name + " in " + project.origin.generic_string(), project.name);
-            continue;
-        }
-        projects_[project.name] = arena_->make_ptr<Project>(project); // copy
-    }
+    for (const auto& project : parser.projects)
+        register_project(project, false, log);
     
     // recurse included configs
     for (const auto& include : parser.config.includes) {

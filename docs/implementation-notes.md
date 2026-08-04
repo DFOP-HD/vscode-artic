@@ -272,12 +272,27 @@ popup per file is not a feature.
 ### Zero-config projects
 
 A CMake- or MSBuild-driven checkout needs no `artic.json`. When the walk up the directory tree
-finds no configuration, `Workspace::find_detected_project()` scans the workspace roots for build
-files and treats what it finds as a configuration that was never written down.
+finds no configuration, `Workspace::find_detected_project()` scans for build files and treats what
+it finds as a configuration that was never written down.
 
 **Order matters and is not negotiable: a configuration the user wrote always wins.** Detection only
 runs after `find_config_recursive()` has returned nothing, so adding an `artic.json` can never be
 overridden by a build file sitting in the same tree.
+
+**The scan starts at the file's own directory and walks up, not at the workspace root.** Each
+ancestor's subtree is scanned in turn, nearest first, and the walk stops at the workspace root.
+Starting at the root instead is what made detection fail completely in a metaproject checkout: with
+`llvm-project`, `llvm_build` and a dozen other trees beside the artic sources, the scan spent its
+whole file budget on `llvm_build`'s 1750 `.vcxproj` files and reported that the workspace contained
+nothing to detect — every file in `stincilla/` and `spmv-benchmarks/` fell back to a single-file
+compile, with hundreds of unknown identifiers and no indication why. Nearest-first also gives the
+better answer when two build files claim the same source: the one beside it describes it, the one
+several checkouts away merely happens to compile it too.
+
+The cost is bounded by the same walk. Only the last ancestor is the workspace root, and it is only
+reached when nothing below it claimed the file, so the expensive scan is the exception rather than
+the rule: in the metaproject, `stincilla/wg_test/kitchen_sink/` resolves after scanning 626
+directories, where the root scan visits 4 000 and gives up.
 
 **The roots come from `initialize`.** `workspaceFolders`, falling back to the deprecated `rootUri`,
 which every client still sends. Both are plain `Uri`s, so the same `FileUri` conversion applies —
@@ -295,14 +310,34 @@ artic itself, so it qualifies when one of the `.vcxproj` files it lists does.
 **The scan is bounded and cached**, because it runs on the miss path of *every* file that has no
 config above it, and an AnyDSL checkout with LLVM in it is hundreds of thousands of files. It caps
 depth, directory count and file count, skips hidden directories and the usual output directories,
-and `detected_config_for_root_` caches the **miss** as well as the hit — otherwise a workspace with
-no build files would be walked again for every file opened in it.
+and `detected_config_for_dir_` caches the **miss** as well as the hit — otherwise a directory with
+no build files would be walked again for every file opened under it.
+
+**It walks with an explicit stack rather than `recursive_directory_iterator`.** An increment that
+fails leaves that iterator unusable, and the loop's only option is to stop, so one unreadable
+directory — a path past `MAX_PATH` inside an LLVM checkout is the realistic case — aborted the scan
+for the entire tree and every build file after it silently did not exist. Per-directory iterators
+make an unreadable directory cost exactly that directory; the count is logged next to the scan
+result.
 
 The result is a synthetic `ConfigFile` whose includes are the detected build files, marked
 `is_implicit` so a build file that turns out not to build artic after all is not reported as a
 problem the user can act on, and named after a path that does not exist so no diagnostic can ever
 be attributed to it. The projects reached through it are recorded in `detected_projects_`, which is
 the only reason `project_of_file()` can tell `DetectedBuildFile` apart from `Config`.
+
+**A name taken from a build file is disambiguated, not refused.** The project registry is keyed by
+name and is per server session, so two checkouts of the same CMake project — `stincilla/` and the
+branch in `stincilla-wg008/` beside it, which is how anyone works on a metaproject — define exactly
+the same project names. Refusing the second as a duplicate meant every file in that checkout
+silently had no project at all, and *which* checkout lost depended on which file the editor happened
+to open first: 227 of the metaproject's 968 sources, more than the fix to the scan itself recovered.
+A name the user wrote in a config is still a genuine conflict and is still refused, because that
+name is what other configs reference in `dependencies`; a name from a build file is referenced by
+nothing and is not the user's to fix. `Workspace::register_project()` is the one place either
+happens, and `unique_project_name()` qualifies the loser with the first path component that differs
+from the origin already holding the name — `jacobi (stincilla-wg008)`, not `jacobi (build)`, since
+both build files live in a directory called `build`.
 
 **What is deliberately *not* done: inferring a project from a directory, or from a glob in a
 setting.** Both were proposed and both were declined by the owner; the evidence is below so nobody

@@ -83,10 +83,12 @@ its own, and anything it expects from another file is reported as an unknown ide
 ## Workspace Configuration File
 
 **If your project is built with CMake or MSBuild, you may not need one.** When there is no
-`artic.json`, the server scans the workspace for `.sln`, `build.ninja` and `.vcxproj` files that
-invoke artic and uses the file lists they contain. The status bar says which build file it took the
-answer from. Nothing is written to disk; run **Artic: Detect workspace configuration** if you would
-rather pin the result in an `artic.json` and commit it.
+`artic.json`, the server scans for `.sln`, `build.ninja` and `.vcxproj` files that invoke artic and
+uses the file lists they contain. The search starts beside the file you opened and works outwards,
+so the nearest build file wins and unrelated trees in the same workspace — an LLVM checkout, say —
+do not get in the way. The status bar says which build file it took the answer from. Nothing is
+written to disk; run **Artic: Detect workspace configuration** if you would rather pin the result
+in an `artic.json` and commit it.
 
 Otherwise, create `artic.json` in the root of your workspace. It tells the language server which
 files belong to which project and are therefore compiled together, which is what makes diagnostics

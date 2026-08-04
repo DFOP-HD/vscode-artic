@@ -211,3 +211,130 @@ describe('a file outside every workspace root', () => {
         assert.equal(info.provenance, 'single-file');
     });
 });
+
+// A metaproject checkout holds many independent trees side by side, so the workspace root
+// is the worst place to start looking: it is the one directory whose scan has to cross
+// every unrelated tree in it.
+describe('two build files claiming the same source', () => {
+    let ws, client, mainUri;
+
+    before(async () => {
+        ws = stageFiles({
+            'app/src/geometry.art': geometryText,
+            'app/src/main.art': mainText,
+        });
+        // Sorts before `app/`, so it is what a scan starting at the workspace root reaches
+        // first. It lists only one of the two sources, so which one won is answerable
+        // from the file count alone.
+        ws.write('aaa-build/outer.vcxproj', vcxproj([ws.path('app', 'src', 'main.art')]));
+        ws.write('app/build/inner.vcxproj', vcxproj(
+            [ws.path('app', 'src', 'geometry.art'), ws.path('app', 'src', 'main.art')]));
+
+        client = new LspClient(findServerBinary(), { cwd: ws.dir });
+        await client.initialize(ws.uri);
+        mainUri = ws.fileUri('app', 'src', 'main.art');
+        client.openDocument(ws.fileUri('app', 'src', 'geometry.art'), geometryText);
+        client.openDocument(mainUri, mainText);
+        await client.waitForDiagnostics(mainUri);
+    });
+    after(async () => { await client?.stop(); ws?.cleanup(); });
+
+    test('the one nearest the source wins', async () => {
+        const info = await projectForFile(client, mainUri);
+        assert.equal(info.provenance, 'detected');
+        assert.equal(info.name, 'inner');
+        assert.equal(info.fileCount, 2);
+    });
+});
+
+describe('a workspace whose scan budget is spent on an unrelated tree', () => {
+    let ws, client, mainUri, diagnostics;
+
+    before(async () => {
+        ws = stageFiles({
+            'app/src/geometry.art': geometryText,
+            'app/src/main.art': mainText,
+        });
+        // More build files than the scan is allowed to collect, in a tree that sorts
+        // before the one that matters -- an LLVM checkout beside the artic sources. A scan
+        // that starts at the workspace root spends its whole budget here and reports that
+        // the workspace contains nothing to detect.
+        for (let i = 0; i < 2100; i++)
+            ws.write(`aaa-noise/p${i}.vcxproj`, '<Project ToolsVersion="4.0" />');
+        ws.write('app/build/demo.vcxproj', vcxproj(
+            [ws.path('app', 'src', 'geometry.art'), ws.path('app', 'src', 'main.art')]));
+
+        client = new LspClient(findServerBinary(), { cwd: ws.dir });
+        await client.initialize(ws.uri);
+        mainUri = ws.fileUri('app', 'src', 'main.art');
+        client.openDocument(ws.fileUri('app', 'src', 'geometry.art'), geometryText);
+        client.openDocument(mainUri, mainText);
+        ({ diagnostics } = await client.waitForDiagnostics(mainUri));
+    });
+    after(async () => { await client?.stop(); ws?.cleanup(); });
+
+    test('still finds the build file beside the source', async () => {
+        const info = await projectForFile(client, mainUri);
+        assert.equal(info.provenance, 'detected');
+        assert.equal(info.name, 'demo');
+        assert.equal(info.fileCount, 2);
+    });
+
+    test('so nothing is unknown', () => {
+        assert.deepEqual(diagnostics.filter((d) => d.severity === 1), []);
+    });
+});
+
+describe('two checkouts of the same project side by side', () => {
+    let ws, client, first, second, firstInfo, secondInfo, firstDiagnostics, secondDiagnostics;
+
+    before(async () => {
+        // A branch checked out next to its trunk is the normal way to work on a metaproject,
+        // and both build trees name their project after the same CMake target. The registry
+        // is keyed by that name, so the second checkout used to be dropped as a duplicate:
+        // every file in it silently had no project, and which checkout lost depended on
+        // which file the editor happened to open first.
+        ws = stageFiles({
+            'trunk/src/geometry.art': geometryText,
+            'trunk/src/main.art': mainText,
+            'branch/src/geometry.art': geometryText,
+            'branch/src/main.art': mainText,
+        });
+        for (const checkout of ['trunk', 'branch']) {
+            ws.write(`${checkout}/build/demo.vcxproj`, vcxproj([
+                ws.path(checkout, 'src', 'geometry.art'),
+                ws.path(checkout, 'src', 'main.art'),
+            ]));
+        }
+
+        client = new LspClient(findServerBinary(), { cwd: ws.dir });
+        await client.initialize(ws.uri);
+        first = ws.fileUri('trunk', 'src', 'main.art');
+        second = ws.fileUri('branch', 'src', 'main.art');
+        client.openDocument(first, mainText);
+        ({ diagnostics: firstDiagnostics } = await client.waitForDiagnostics(first));
+        firstInfo = await projectForFile(client, first);
+        client.openDocument(second, mainText);
+        ({ diagnostics: secondDiagnostics } = await client.waitForDiagnostics(second));
+        secondInfo = await projectForFile(client, second);
+    });
+    after(async () => { await client?.stop(); ws?.cleanup(); });
+
+    test('both checkouts get their own project', () => {
+        assert.equal(firstInfo.provenance, 'detected');
+        assert.equal(secondInfo.provenance, 'detected');
+        assert.equal(firstInfo.fileCount, 2);
+        assert.equal(secondInfo.fileCount, 2);
+    });
+
+    test('and each is compiled with the sources of its own checkout', () => {
+        assert.ok(firstInfo.origin.includes('trunk'), `origin was ${firstInfo.origin}`);
+        assert.ok(secondInfo.origin.includes('branch'), `origin was ${secondInfo.origin}`);
+        assert.notEqual(firstInfo.name, secondInfo.name);
+    });
+
+    test('so nothing is unknown in either', () => {
+        assert.deepEqual(firstDiagnostics.filter((d) => d.severity === 1), []);
+        assert.deepEqual(secondDiagnostics.filter((d) => d.severity === 1), []);
+    });
+});
