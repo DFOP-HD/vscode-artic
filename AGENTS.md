@@ -326,7 +326,10 @@ verified, and say so if you deliberately skipped one.
 6. **Upstream-diff reviewed** — for submodule changes, `git -C artic diff --stat upstream/master...HEAD`
    was inspected and the growth is justified. Unrelated reformatting is reverted.
 7. **Dependencies audited** — `npm audit` in `vscode/` reports **0 vulnerabilities**. Never
-   accept a finding silently: fix it, or record the justification here. See
+   accept a finding silently: fix it, or record the justification here. **Run it even when the
+   change touched no dependency** — advisories are published against versions that are already
+   in the lockfile, so a tree that was clean last week fails today for no local reason. Skipping
+   it on "nothing changed" grounds is how a release got cut with a red CI. See
    [Dependency security](#dependency-security) before reaching for `npm audit fix --force`.
 8. **Docs updated** — user-facing behaviour in [README.md](README.md), how a feature works in
    [docs/implementation-notes.md](docs/implementation-notes.md), and how to work on the repo here.
