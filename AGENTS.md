@@ -297,16 +297,66 @@ ctest --test-dir artic-lsp/build-nolsp -E "^thorin_"
   [.github/workflows/ci.yml](.github/workflows/ci.yml).
 - Changes to the fork fall into two sets, and they must be kept distinguishable:
   **LSP-only** (guarded, will never be upstreamed) and **upstreamable**. The latter is
-  currently: the `err.stream` fix in `log.h`, uninitialised `Loc::Pos` members, the
-  `std::is_pod` → `is_standard_layout && is_trivial` fix in `hash.h` (`is_pod` is deprecated
-  in C++20), lexer/parser/`ast.cpp` error tolerance, the bounded parse-error recovery in
-  `parser.h`/`parser.cpp` (non-consuming `expect()`, `skip_to_decl()`, `reported_at()`), the
-  type-checker error tolerance in `check.cpp` including the `infer` rule the four error nodes
-  were missing, the `pop_scope` warning fix, `Node::dump()`/`Type::dump()` writing to
-  `log::err` instead of `log::out`, the `usage()` text in `main.cpp`, and the
-  `file(row, col)` → `file:row:col` location format in `loc.h` (a separate, purely cosmetic
-  change — terminal-clickable, but user-visible). The unmerged `origin/error-tolerance`
-  branch is relevant prior art.
+  currently: the `err.stream` fix in `log.h`, uninitialised `Loc::Pos` members and
+  `Path::start_decl`, lexer/parser/`ast.cpp` error tolerance, the bounded parse-error
+  recovery in `parser.h`/`parser.cpp` (non-consuming `expect()`, `skip_to_decl()`,
+  `reported_at()`), the type-checker error tolerance in `check.cpp` including the `infer`
+  rule the four error nodes were missing and `TypeChecker::invalid_array_size()`, the
+  `pop_scope(bool)` warning fix, the `usage()` text in `main.cpp`, and the
+  `file(row, col)` → `file:row:col` location format in `loc.h` (a separate, purely
+  cosmetic change — terminal-clickable, but user-visible).
+  **The whole set is prepared on `origin/upstreamable`, `origin/usage-text` and
+  `origin/loc-format`** — see [Upstreaming to AnyDSL/artic](#upstreaming-to-anydslartic).
+- **`Node::dump()`/`Type::dump()` writing to `log::err` is fork-only and deliberately not
+  in the PR.** Nothing in `artic-lsp/` calls them; the reason to redirect them is that a
+  `dump()` left in during debugging writes to the server's stdout and corrupts the LSP
+  stdio channel. That is our problem, not upstream's.
+- **`std::is_pod` → `is_standard_layout` was fixed upstream in `3aba9f8` and is no longer
+  ours.** Upstream is not static: check `git -C artic log HEAD..upstream/master` before
+  claiming anything about the upstreamable set.
+
+## Upstreaming to AnyDSL/artic
+
+The upstreamable set is maintained as three branches cut from `upstream/master`, **not** from
+the fork's `master`: the fork's history is one long LSP development line and nothing in it
+is reviewable on its own. One PR per branch, so a reviewer can take the cosmetic ones or
+leave them without blocking the fixes.
+
+| Branch | Contents |
+| ------ | -------- |
+| `upstreamable` | 8 focused commits: uninitialised members, `log::error` terminating on the stream it wrote to, lexer + parser + type-checker error tolerance, prototype warning fix |
+| `usage-text` | 1 commit: the five flags `usage()` never listed. Separate because it is documentation, not behaviour |
+| `loc-format` | 1 commit: `file(row, col)` → `file:row:col`. Separate because it changes user-visible output and is purely cosmetic |
+
+Work on them in **git worktrees**, so the submodule checkout and the parent's gitlink are
+never disturbed (`build*/` is gitignored in the parent):
+
+```powershell
+git -C artic worktree add ../build-upstream-pr/artic upstreamable
+cmake -S build-upstream-pr/artic -B build-upstream-pr/build -G Ninja `
+      -D CMAKE_BUILD_TYPE=Release -D CMAKE_C_COMPILER=gcc -D CMAKE_CXX_COMPILER=g++ `
+      -D BUILD_SHARED_LIBS=OFF -D BUILD_TESTING=ON `
+      -D Thorin_DIR="$PWD/artic-lsp/buildGcc/share/anydsl/cmake" `
+      -D Half_DIR="$PWD/artic-lsp/buildGcc/_deps/half-src/include"
+cmake --build build-upstream-pr/build --parallel
+ctest --test-dir build-upstream-pr/build -E "^thorin_"
+```
+
+- **`-D BUILD_TESTING=ON` is required.** `artic/CMakeLists.txt` only does `include(CTest)`
+  *inside* `if (BUILD_TESTING)`, so configuring `artic/` directly (rather than through
+  `artic-lsp/nolsp`, which includes CTest first) registers no tests at all and `ctest`
+  reports `No tests were found!!!` instead of failing.
+- **Where a branch found a better shape than the fork had, the fork was changed to match**
+  (`3bc27a6`) rather than left to drift: `pop_scope(bool report_unused = true)` with one
+  call site instead of `pop_scope(ast::Node*)` threaded through nine, and a shared
+  `TypeChecker::invalid_array_size()` instead of the same inline `error(...)` written out
+  nine times. Keep it that way — a divergence here is a merge conflict waiting for the day
+  the PR lands. The only intended difference left is the `dump()` stream, which is fork-only
+  on purpose.
+- `Ptr<T>` has no `operator!=(nullptr_t)`; write `fn->body.get() != nullptr`.
+- Evidence for the error-tolerance commits, on a file whose first function is missing a
+  closing paren: upstream reports **8 errors** and loses every later declaration, the branch
+  reports **1**.
 
 ## Definition of Done
 
@@ -376,14 +426,20 @@ can support is implemented and tested; the two that are not are parked below for
 are not about effort. What is left is one piece of hygiene with an external dependency, and a
 short list of things that were measured and found not to be worth doing yet.
 
-### 1. Upstream the upstreamable fork set — *not started, and the only open work*
+### 1. Upstream the upstreamable fork set — *branches pushed, PRs not opened*
 
-Open a PR against AnyDSL/artic with the non-LSP fixes listed under
-[Working with the artic/ submodule](#working-with-the-artic-submodule). The unmerged
-`origin/error-tolerance` branch is prior art. The longer this waits the more expensive it gets
-— parse-error recovery and the error nodes' missing `infer` rule both landed in exactly this
-set. It is also the only item whose outcome is not ours to decide, so starting it early is
-worth more than finishing it fast.
+The three branches described in [Upstreaming to AnyDSL/artic](#upstreaming-to-anydslartic) are
+cut, built on GCC and Clang, green at 145/145, and pushed to `origin`
+(`DFOP-HD/artic-with-lsp`). What is left is not ours to do:
+
+- open one PR per branch against `AnyDSL/artic` `master`, from `upstreamable`, `usage-text`
+  and `loc-format`;
+- rebase all three onto `upstream/master` if it moves again before review, and re-run `ctest`.
+
+Separately and independently of the PR: the fork's `master` is behind `upstream/master` by
+three commits (`3aba9f8`, `392fb69`, `0dc16a3`) and still carries the now-redundant `hash.h`
+fix. Merging upstream into the fork is a submodule change under the two-commit rule and needs
+the full LSP suite re-run, so it is its own task.
 
 ### Deferred — measured, and not worth doing at the current scale
 
