@@ -313,3 +313,49 @@ see [Releasing](#releasing).
 Open the repository in VS Code and press `F5`. This runs the `Build Extension with LSP Server`
 task, which builds the server, stages it into `vscode/build/bin/` and compiles the extension, then
 opens a second window with the extension loaded.
+
+## Neovim
+
+Tested on Neovim 0.12. The language server speaks standard LSP, so it only needs to be registered with Neovim. 
+A fallback syntax file is provided in `nvim/syntax/artic.vim`, because semantic highlighting from the server alone is limited.
+
+First get the server binary: [build it](#building), or take `artic-lsp` out of a release.
+
+Add the following to your Neovim configuration, typically `~/.config/nvim/init.lua`, or to a file it `require`s:
+
+```lua
+-- Recognise Artic files. (.impala files are opened too, but the legacy
+-- Impala syntax is not supported.)
+vim.filetype.add({
+    extension = { art = "artic", impala = "artic" },
+})
+
+-- Make `gcc` / `gc` comment with //
+vim.api.nvim_create_autocmd("FileType", {
+    pattern = "artic",
+    callback = function() vim.bo.commentstring = "// %s" end,
+})
+
+-- Register and start the language server.
+-- Adjust `cmd` to wherever you built or extracted the binary.
+-- `artic.json` must be in the root workspace folder, so it is listed first.
+vim.lsp.config("artic", {
+    cmd = { "/path/to/vscode-artic/artic-lsp/build/bin/artic-lsp" },
+    filetypes = { "artic" },
+    root_markers = { "artic.json", ".git" },
+})
+vim.lsp.enable("artic")
+
+-- Optional: show inferred types and call parameter names
+vim.lsp.inlay_hint.enable(true)
+```
+
+Install the fallback syntax highlighting by copying or symlinking the file into your config:
+
+```bash
+mkdir -p ~/.config/nvim/syntax
+ln -s /path/to/vscode-artic/nvim/syntax/artic.vim ~/.config/nvim/syntax/artic.vim
+```
+
+The `Artic:` commands, the status-bar project indicator and the `artic.*` settings are VS Code client features and do not exist in Neovim. 
+If your project has no `artic.json`, the server still looks for `.sln`, `build.ninja` and `.vcxproj` files itself; otherwise write an [`artic.json`](#workspace-configuration-file) by hand.
